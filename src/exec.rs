@@ -1,5 +1,4 @@
 use std::iter;
-use std::fmt::Debug;
 use std::ops::Range;
 use thiserror::Error;
 use crate::parse::{Function, Module};
@@ -7,24 +6,159 @@ use crate::parse::{Function, Module};
 /// Parsed instructions that can be used inside function bodies.
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum Instruction {
-	/// No operation. Does exactly nothing.
-	NoOp,
-	/// Push a int32 onto the stack.
-	ConstInt32(u8),
-	/// Pop two int32 from the stack, add them and push the result onto the stack.
-	AddInt32,
-	/// Pop two int32 from the stack, subtract them and push the result onto the stack.
-	SubInt32,
-	// Pop two int32 from the stack, multiply them and push the result onto the stack.
-	MulInt32,
-	/// Increase memory size.
-	IncreaseMem,
-	/// Write uint8 to memory.
-	StoreUint8,
-	/// Call function by name
-	FunctionCall(String),
-	/// Debug stack and instruction pointer
-	Debug,
+	Unreachable,
+	Nop,
+	Block { block_type: u8, instructions: Vec<Instruction> },
+	Loop { block_type: u8, instructions: Vec<Instruction> },
+	If { block_type: u8, if_instructions: Vec<Instruction>, else_instructions: Vec<Instruction> },
+	Br { label_index: u8 },
+	BrIf { label_index: u8 },
+	BrTable { label_indexes: Vec<u8> },
+	Return,
+	Call { function_index: u8 },
+	CallIndirect { table_index: u8, type_index: u8 },
+
+	I32Const(i32),
+	I64Const(i64),
+	F32Const(f32),
+	F64Const(f64),
+	I32Eqz,
+	I32Eq,
+	I32Ne,
+	I32LtS,
+	I32LtU,
+	I32GtS,
+	I32GtU,
+	I32LeS,
+	I32LeU,
+	I32GeS,
+	I32GeU,
+
+	I64Eqz,
+	I64Eq,
+	I64Ne,
+	I64LtS,
+	I64LtU,
+	I64GtS,
+	I64GtU,
+	I64LeS,
+	I64LeU,
+	I64GeS,
+	I64GeU,
+
+	F32Eq,
+	F32Ne,
+	F32Lt,
+	F32Gt,
+	F32Le,
+	F32Ge,
+
+	F64Eq,
+	F64Ne,
+	F64Lt,
+	F64Gt,
+	F64Le,
+	F64Ge,
+
+	I32Clz,
+	I32Ctz,
+	I32Popcnt,
+	I32Add,
+	I32Sub,
+	I32Mul,
+	I32DivS,
+	I32DivU,
+	I32RemS,
+	I32RemU,
+	I32And,
+	I32Or,
+	I32Xor,
+	I32Shl,
+	I32ShrS,
+	I32ShrU,
+	I32Rotl,
+	I32Rotr,
+
+	I64Clz,
+	I64Ctz,
+	I64Popcnt,
+	I64Add,
+	I64Sub,
+	I64Mul,
+	I64DivS,
+	I64DivU,
+	I64RemS,
+	I64RemU,
+	I64And,
+	I64Or,
+	I64Xor,
+	I64Shl,
+	I64ShrS,
+	I64ShrU,
+	I64Rotl,
+	I64Rotr,
+
+	F32Abs,
+	F32Neg,
+	F32Ceil,
+	F32Floor,
+	F32Trunc,
+	F32Nearest,
+	F32Sqrt,
+	F32Add,
+	F32Sub,
+	F32Mul,
+	F32Div,
+	F32Min,
+	F32Max,
+	F32Copysign,
+
+	F64Abs,
+	F64Neg,
+	F64Ceil,
+	F64Floor,
+	F64Trunc,
+	F64Nearest,
+	F64Sqrt,
+	F64Add,
+	F64Sub,
+	F64Mul,
+	F64Div,
+	F64Min,
+	F64Max,
+	F64Copysign,
+
+	I32WrapI64,
+	I32TruncF32S,
+	I32TruncF32U,
+	I32TruncF64S,
+	I32TruncF64U,
+	I64ExtendI32S,
+	I64ExtendI32U,
+	I64TruncF32S,
+	I64TruncF32U,
+	I64TruncF64S,
+	I64TruncF64U,
+	F32ConvertI32S,
+	F32ConvertI32U,
+	F32ConvertI64S,
+	F32ConvertI64,
+	F32DemoteF64,
+	F64ConvertI32S,
+	F64ConvertI32U,
+	F64ConvertI64S,
+	F64ConvertI64U,
+	F64PromoteF32,
+	I32ReinterpretF32,
+	I64ReinterpretF64,
+	F32ReinterpretI32,
+	F64ReinterpretI64,
+
+	I32Extend8S,
+	I32Extend16S,
+	I64Extend8S,
+	I64Extend16S,
+	I64Extend32S,
 }
 
 impl Instruction {
@@ -131,7 +265,7 @@ impl Runtime {
 	}
 }
 
-/// A module in execution.
+/// A module in execution. This instance contains a reference to a [Module] and a reference to [Runtime].
 ///
 /// The borrows are needed, because otherwise the borrow checker is not smart enough to allow mutable access to the
 /// runtime (&mut self: Instance) while having a immutable reference to module (&self: Instance). With the borrows,
