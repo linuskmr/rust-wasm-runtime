@@ -11,7 +11,9 @@ fn main() {
 }
 
 fn main_() -> Result<(), Box<dyn Error>> {
-    let code = fs::File::open("example.wasm")?;
+    // let path = "target/wasm32-wasi/release/rust_wasm_runtime.wasm";
+    let path = "example.wasm";
+    let code = fs::File::open(path)?;
     let module = Module::new(code)?;
     println!("{:#?}", module);
     Ok(())

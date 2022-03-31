@@ -460,7 +460,7 @@ pub enum ExportKind {
 
 #[derive(PartialEq, Debug, Default)]
 pub struct Function {
-	pub name: Option<String>,
+	pub outer_name: Option<String>,
 	pub signature: Rc<FunctionSignature>,
 	pub num_locals: usize,
 	pub body: Vec<Instruction>,
@@ -505,6 +505,15 @@ impl Memory {
 	fn page_size(&self) -> usize {
 		self.data.len() / MEMORY_PAGE_SIZE
 	}
+}
+
+/// https://webassembly.github.io/spec/core/binary/modules.html#data-section
+#[derive(Eq, PartialEq, Debug, TryFromPrimitive)]
+#[repr(u8)]
+pub enum DataMode {
+	ActiveMemory0 = 0x00,
+	Passive = 0x01,
+	Active = 0x02,
 }
 
 /// A parsed WebAssembly module.
@@ -589,7 +598,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 		for _ in 0..num_functions {
 			let function_type_index = leb128::read::unsigned(&mut self.bytecode)? as usize;
 			let function = Function {
-				name: None,
+				outer_name: None,
 				signature: Rc::clone(&self.types[function_type_index]),
 				..Function::default()
 			};
@@ -613,7 +622,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 		match kind {
 			ExportKind::Function => {
-				self.module.functions[index].name = Some(name);
+				self.module.functions[index].outer_name = Some(name);
 			},
 			ExportKind::Memory => {
 				self.module.memories[index].name = Some(name);
@@ -865,7 +874,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 	}
 
 	fn parse_function_code(&mut self, index: usize) -> Result<(), ParsingError> {
-		let code_size = leb128::read::unsigned(&mut self.bytecode)? as usize;
+		let _code_size = leb128::read::unsigned(&mut self.bytecode)? as usize;
 		let num_locals = leb128::read::unsigned(&mut self.bytecode)? as usize;
 		let body = self.parse_instructions()?;
 		self.module.functions[index].num_locals = num_locals;
@@ -894,7 +903,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 			match import_kind {
 				ExportKind::Function => {
 					let import_function = Function {
-						name: Some(format!("IMPORT:{}.{}", module_name, field_name)),
+						outer_name: Some(format!("IMPORT:{}.{}", module_name, field_name)),
 						signature: Rc::clone(&self.types[signature_index]),
 						num_locals: 0,
 						body: vec![]
@@ -911,7 +920,6 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 	fn parse_memory_section(&mut self) -> Result<(), ParsingError> {
 		let num_mems = leb128::read::unsigned(&mut self.bytecode)? as usize;
 		log::trace!("Parsing memory section with {} imports", num_mems);
-		assert!(num_mems <= 1, "Only zero or one memory allowed"); // TODO: Return error
 		for _ in 0..num_mems {
 			let memory_limit_kind = LimitKind::try_from(self.read_byte()?)?;
 			let memory_limit = match memory_limit_kind {
@@ -931,6 +939,35 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 			log::trace!("{:?}", memory);
 			self.module.memories.push(memory);
 		}
+		Ok(())
+	}
+
+	fn parse_data_section(&mut self) -> Result<(), ParsingError> {
+		let num_segments = leb128::read::unsigned(&mut self.bytecode)? as usize;
+		log::trace!("Parsing data section with {} segments", num_segments);
+
+		for _ in 0..num_segments {
+			let data_mode = DataMode::try_from(self.read_byte()?)?;
+			match data_mode {
+				DataMode::ActiveMemory0 => {
+					let expression = self.parse_instructions()?;
+					let segment_size = leb128::read::unsigned(&mut self.bytecode)? as usize;
+					let mut segment_data = vec![0u8; segment_size];
+					self.bytecode.read_exact(&mut segment_data)?;
+					log::debug!("Expression:{:?} Segment data:{:?}", expression, String::from_utf8(segment_data));
+				},
+				DataMode::Passive => unimplemented!(),
+				DataMode::Active => unimplemented!(),
+			}
+		}
+		Ok(())
+	}
+
+	fn parse_custom_section(&mut self, section_size: u64) -> Result<(), ParsingError> {
+		let name = self.read_string()?;
+		log::trace!("Skipping custom section {} with {} bytes", name, section_size);
+		let mut sink = vec![0u8; section_size as usize];
+		self.bytecode.read_exact(&mut sink);
 		Ok(())
 	}
 
@@ -958,12 +995,13 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 				SectionId::Code => self.parse_code_section()?,
 				SectionId::Import => self.parse_import_section()?,
 				SectionId::Memory => self.parse_memory_section()?,
+				SectionId::Data => self.parse_data_section()?,
+				SectionId::Custom => self.parse_custom_section(section_size)?,
 				other => {
 					log::error!("Unknown section {:?}. Ending parsing with Ok", other);
 					break
 				},
 			}
-			log::info!("{:#?}", self.module);
 		}
 		Ok(self.module)
 	}
@@ -991,6 +1029,9 @@ pub enum ParsingError {
 
 	#[error("Unknown limit: {0}")]
 	UnknownLimit(#[from] TryFromPrimitiveError<LimitKind>),
+
+	#[error("Unknown data mode: {0}")]
+	UnknownDataMode(#[from] TryFromPrimitiveError<DataMode>),
 
 	#[error("IoError: {0}")]
 	IoError(#[from] io::Error),
