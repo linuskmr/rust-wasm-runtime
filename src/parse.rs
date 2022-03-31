@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use num_enum::{TryFromPrimitive, TryFromPrimitiveError};
 use std::convert::TryFrom;
-use std::{io, string};
+use std::{fmt, io, iter, string};
+use std::fmt::Formatter;
+use std::ops::Range;
 use std::rc::Rc;
 use thiserror::Error;
 
@@ -248,6 +250,31 @@ pub enum Instruction {
 	TableSet(usize),
 	Extension,
 
+	I32Load(MemArg),
+	I64Load(MemArg),
+	F32Load(MemArg),
+	F64Load(MemArg),
+	I32Load8s(MemArg),
+	I32Load8u(MemArg),
+	I32Load16s(MemArg),
+	I32Load16u(MemArg),
+	I64Load8s(MemArg),
+	I64Load8u(MemArg),
+	I64Load16s(MemArg),
+	I66Load16u(MemArg),
+	I64Load32s(MemArg),
+	I64Load32u(MemArg),
+	I32Store(MemArg),
+	I64Store(MemArg),
+	F32Store(MemArg),
+	F64Store(MemArg),
+	I32Store8(MemArg),
+	I32Store16(MemArg),
+	I64Store8(MemArg),
+	I64Store16(MemArg),
+	I64Store32(MemArg),
+
+
 	I32Const(i32),
 	I64Const(i64),
 	F32Const(f32),
@@ -407,6 +434,14 @@ pub enum Type {
 	Var = 0x01,
 }
 
+/// https://webassembly.github.io/spec/core/binary/types.html#limits
+#[derive(Eq, PartialEq, Debug, TryFromPrimitive)]
+#[repr(u8)]
+pub enum LimitKind {
+	Min = 0x00,
+	MinMax = 0x01,
+}
+
 #[derive(Eq, PartialEq, Debug, Default)]
 pub struct FunctionSignature {
 	pub params: Vec<Type>,
@@ -425,16 +460,58 @@ pub enum ExportKind {
 
 #[derive(PartialEq, Debug, Default)]
 pub struct Function {
-	pub export_name: Option<String>,
+	pub name: Option<String>,
 	pub signature: Rc<FunctionSignature>,
 	pub num_locals: usize,
 	pub body: Vec<Instruction>,
+}
+
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
+pub struct MemArg {
+	align: usize,
+	offset: usize,
+}
+
+const MEMORY_PAGE_SIZE: usize = 4096;
+
+#[derive(Default, PartialEq)]
+pub struct Memory {
+	data: Vec<u8>,
+	/// Minimum and maximum page limit.
+	limit: Range<usize>,
+	name: Option<String>,
+}
+
+impl fmt::Debug for Memory {
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		// Do not print self.data because it is very large
+		f.debug_struct("Memory")
+			.field("limit", &self.limit)
+			.field("name", &self.name)
+			.finish()
+	}
+}
+
+impl Memory {
+	fn grow(&mut self, new_page_size: usize) {
+		assert!(new_page_size >= self.limit.start, "Memory grow too small");
+		assert!(new_page_size <= self.limit.end, "Memory grow too large");
+
+		log::debug!("Memory grow to {} pages", new_page_size);
+		let new_byte_size = MEMORY_PAGE_SIZE * new_page_size;
+		self.data.resize(new_byte_size, 0);
+	}
+
+	fn page_size(&self) -> usize {
+		self.data.len() / MEMORY_PAGE_SIZE
+	}
 }
 
 /// A parsed WebAssembly module.
 #[derive(Default, Debug, PartialEq)]
 pub struct Module {
 	functions: Vec<Function>,
+	memories: Vec<Memory>,
 }
 
 impl Module {
@@ -495,7 +572,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 	fn parse_type_section(&mut self) -> Result<Vec<Rc<FunctionSignature>>, ParsingError> {
 		let num_types = leb128::read::unsigned(&mut self.bytecode)? as usize;
-		log::debug!("Parsing type section with {} types", num_types);
+		log::trace!("Parsing type section with {} types", num_types);
 		let mut types = Vec::with_capacity(num_types);
 		for _ in 0..num_types {
 			let function_type = self.parse_function_type()?;
@@ -507,12 +584,12 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 	fn parse_function_section(&mut self) -> Result<(), ParsingError> {
 		let num_functions = leb128::read::unsigned(&mut self.bytecode)? as usize;
-		log::debug!("Parsing function section with {} functions", num_functions);
+		log::trace!("Parsing function section with {} functions", num_functions);
 
 		for _ in 0..num_functions {
 			let function_type_index = leb128::read::unsigned(&mut self.bytecode)? as usize;
 			let function = Function {
-				export_name: None,
+				name: None,
 				signature: Rc::clone(&self.types[function_type_index]),
 				..Function::default()
 			};
@@ -536,8 +613,11 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 		match kind {
 			ExportKind::Function => {
-				self.module.functions[index].export_name = Some(name);
+				self.module.functions[index].name = Some(name);
 			},
+			ExportKind::Memory => {
+				self.module.memories[index].name = Some(name);
+			}
 			_ => unimplemented!()
 		}
 
@@ -546,7 +626,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 	fn parse_export_section(&mut self) -> Result<(), ParsingError> {
 		let num_exports = leb128::read::unsigned(&mut self.bytecode)? as usize;
-		log::debug!("Parsing export section with {} functions", num_exports);
+		log::trace!("Parsing export section with {} functions", num_exports);
 
 		for _ in 0..num_exports {
 			let export = self.parse_export()?;
@@ -562,6 +642,13 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 		Ok(instructions)
 	}
 
+	fn parse_memarg(&mut self) -> Result<MemArg, ParsingError> {
+		Ok(MemArg {
+			align: leb128::read::unsigned(&mut self.bytecode)? as usize,
+			offset: leb128::read::unsigned(&mut self.bytecode)? as usize,
+		})
+	}
+
 	fn parse_instructions(&mut self) -> Result<Vec<Instruction>, ParsingError> {
 		let mut instructions = Vec::new();
 		loop {
@@ -569,7 +656,10 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 			let instruction = match opcode {
 				Opcode::Unreachable => Instruction::Unreachable,
 				Opcode::Nop => Instruction::Nop,
-				Opcode::Block => self.parse_block(),
+				Opcode::Block => Instruction::Block {
+					instructions: self.parse_block()?,
+					block_type: 0,
+				},
 				Opcode::End => break,
 				Opcode::Return => Instruction::Return,
 				Opcode::Call => {
@@ -595,6 +685,29 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 					Instruction::LocalTee(index)
 				}
 				// ...
+				Opcode::I32Load => Instruction::I32Load(self.parse_memarg()?),
+				Opcode::I64Load => Instruction::I64Load(self.parse_memarg()?),
+				Opcode::F32Load => Instruction::F32Load(self.parse_memarg()?),
+				Opcode::F64Load => Instruction::F64Load(self.parse_memarg()?),
+				Opcode::I32Load8s => Instruction::I32Load8s(self.parse_memarg()?),
+				Opcode::I32Load8u => Instruction::I32Load8u(self.parse_memarg()?),
+				Opcode::I32Load16s => Instruction::I32Load16s(self.parse_memarg()?),
+				Opcode::I32Load16u => Instruction::I32Load16u(self.parse_memarg()?),
+				Opcode::I64Load8s => Instruction::I64Load8s(self.parse_memarg()?),
+				Opcode::I64Load8u => Instruction::I64Load8u(self.parse_memarg()?),
+				Opcode::I64Load16s => Instruction::I64Load16s(self.parse_memarg()?),
+				Opcode::I66Load16u => Instruction::I66Load16u(self.parse_memarg()?),
+				Opcode::I64Load32s => Instruction::I64Load32s(self.parse_memarg()?),
+				Opcode::I64Load32u => Instruction::I64Load32u(self.parse_memarg()?),
+				Opcode::I32Store => Instruction::I32Store(self.parse_memarg()?),
+				Opcode::I64Store => Instruction::I64Store(self.parse_memarg()?),
+				Opcode::F32Store => Instruction::F32Store(self.parse_memarg()?),
+				Opcode::F64Store => Instruction::F64Store(self.parse_memarg()?),
+				Opcode::I32Store8 => Instruction::I32Store8(self.parse_memarg()?),
+				Opcode::I32Store16 => Instruction::I32Store16(self.parse_memarg()?),
+				Opcode::I64Store8 => Instruction::I64Store8(self.parse_memarg()?),
+				Opcode::I64Store16 => Instruction::I64Store16(self.parse_memarg()?),
+				Opcode::I64Store32 => Instruction::I64Store32(self.parse_memarg()?),
 				Opcode::I32Const => {
 					Instruction::I32Const(leb128::read::unsigned(&mut self.bytecode)? as i32)
 				},
@@ -741,7 +854,10 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 				Opcode::I64Extend8S => Instruction::I64Extend8S,
 				Opcode::I64Extend16S => Instruction::I64Extend16S,
 				Opcode::I64Extend32S => Instruction::I64Extend32S,
-				other => panic!("opcode {:?}", other)
+				other => {
+					log::error!("Unimplemented opcode {:?}", other);
+					continue
+				}
 			};
 			instructions.push(instruction);
 		}
@@ -759,10 +875,61 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 	fn parse_code_section(&mut self) -> Result<(), ParsingError> {
 		let num_functions = leb128::read::unsigned(&mut self.bytecode)? as usize;
-		log::debug!("Parsing code section with {} functions", num_functions);
+		log::trace!("Parsing code section with {} functions", num_functions);
 
 		for index in 0..num_functions {
-			self.parse_function_code(index);
+			self.parse_function_code(index)?;
+		}
+		Ok(())
+	}
+
+	fn parse_import_section(&mut self) -> Result<(), ParsingError> {
+		let num_imports = leb128::read::unsigned(&mut self.bytecode)? as usize;
+		log::trace!("Parsing import section with {} imports", num_imports);
+		for _ in 0..num_imports {
+			let module_name = self.read_string()?;
+			let field_name = self.read_string()?;
+			let import_kind = ExportKind::try_from(self.read_byte()?)?;
+			let signature_index = leb128::read::unsigned(&mut self.bytecode)? as usize;
+			match import_kind {
+				ExportKind::Function => {
+					let import_function = Function {
+						name: Some(format!("IMPORT:{}.{}", module_name, field_name)),
+						signature: Rc::clone(&self.types[signature_index]),
+						num_locals: 0,
+						body: vec![]
+					};
+					log::debug!("Import {:?}", import_function);
+					self.module.functions.push(import_function);
+				},
+				_ => unimplemented!(),
+			}
+		}
+		Ok(())
+	}
+
+	fn parse_memory_section(&mut self) -> Result<(), ParsingError> {
+		let num_mems = leb128::read::unsigned(&mut self.bytecode)? as usize;
+		log::trace!("Parsing memory section with {} imports", num_mems);
+		assert!(num_mems <= 1, "Only zero or one memory allowed"); // TODO: Return error
+		for _ in 0..num_mems {
+			let memory_limit_kind = LimitKind::try_from(self.read_byte()?)?;
+			let memory_limit = match memory_limit_kind {
+				LimitKind::Min => {
+					let min = leb128::read::unsigned(&mut self.bytecode)? as usize;
+					min..(u32::MAX as usize)
+				},
+				LimitKind::MinMax => {
+					let min = leb128::read::unsigned(&mut self.bytecode)? as usize;
+					let max = leb128::read::unsigned(&mut self.bytecode)? as usize;
+					min..max
+				}
+			};
+			let mut memory = Memory::default();
+			memory.limit = memory_limit.clone();
+			memory.grow(memory_limit.start);
+			log::trace!("{:?}", memory);
+			self.module.memories.push(memory);
 		}
 		Ok(())
 	}
@@ -783,24 +950,20 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 		while let Ok(section_id) = self.read_byte() {
 			let section_id = SectionId::try_from(section_id)?;
 			let section_size = leb128::read::unsigned(&mut self.bytecode)?;
-			log::debug!("Section {:?} with size {:?} bytes", section_id, section_size);
+			log::trace!("Section {:?} with size {:?} bytes", section_id, section_size);
 			match section_id {
 				SectionId::Type => self.types = self.parse_type_section()?,
-				SectionId::Function => {
-					let function_types = self.parse_function_section()?;
-					/*for (function, function_type_index) in module.functions.iter_mut().zip(function_types) {
-						function.signature = Rc::clone(&types[function_type_index]);
-					}*/
-				},
-				SectionId::Export => {
-					let exports = self.parse_export_section()?;
-					/*for export in exports {
-
-					}*/
-				},
+				SectionId::Function => self.parse_function_section()?,
+				SectionId::Export => self.parse_export_section()?,
 				SectionId::Code => self.parse_code_section()?,
-				_ => break,
+				SectionId::Import => self.parse_import_section()?,
+				SectionId::Memory => self.parse_memory_section()?,
+				other => {
+					log::error!("Unknown section {:?}. Ending parsing with Ok", other);
+					break
+				},
 			}
+			log::info!("{:#?}", self.module);
 		}
 		Ok(self.module)
 	}
@@ -826,10 +989,13 @@ pub enum ParsingError {
 	#[error("Unknown opcode: {0}")]
 	UnknownOpcode(#[from] TryFromPrimitiveError<Opcode>),
 
+	#[error("Unknown limit: {0}")]
+	UnknownLimit(#[from] TryFromPrimitiveError<LimitKind>),
+
 	#[error("IoError: {0}")]
 	IoError(#[from] io::Error),
 
-	#[error("Expected opcode {:?}")]
+	#[error("Expected opcode {0:?}")]
 	ExpectedOpcode(Opcode),
 
 	#[error("Leb128Error: {0}")]
