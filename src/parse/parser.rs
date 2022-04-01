@@ -1,547 +1,31 @@
-use std::collections::HashMap;
-use num_enum::{TryFromPrimitive, TryFromPrimitiveError};
-use std::convert::TryFrom;
-use std::{fmt, io, iter, string};
-use std::fmt::Formatter;
-use std::ops::Range;
+use std::{io, iter};
 use std::rc::Rc;
-use thiserror::Error;
-
-
-/// https://webassembly.github.io/spec/core/binary/modules.html#sections
-#[derive(Eq, PartialEq, Debug, TryFromPrimitive)]
-#[repr(u8)]
-pub enum SectionId {
-	Custom = 0,
-	Type = 1,
-	Import = 2,
-	Function = 3,
-	Table = 4,
-	Memory = 5,
-	Global = 6,
-	Export = 7,
-	Start = 8,
-	Element = 9,
-	Code = 10,
-	Data = 11,
-	DataCount = 12,
-}
-
-/// https://webassembly.github.io/spec/core/binary/instructions.html
-#[derive(Eq, PartialEq, Debug, TryFromPrimitive)]
-#[repr(u8)]
-pub enum Opcode {
-	Unreachable          = 0x00,
-	Nop                  = 0x01,
-	Block                = 0x02,
-	Loop                 = 0x03,
-	If                   = 0x04,
-	End                  = 0x0B,
-	Br                   = 0x0C,
-	BrIf                 = 0x0D,
-	BrTable              = 0x0E,
-	Return               = 0x0F,
-	Call                 = 0x10,
-	CallIndirect         = 0x11,
-	RefNull              = 0xD0,
-	RefIsNull            = 0xD1,
-	RefFunc              = 0xD2,
-	Drop                 = 0x1A,
-	Select               = 0x1B,
-	SelectValueType      = 0x1C,
-	LocalGet             = 0x20,
-	LocalSet             = 0x21,
-	LocalTee             = 0x22,
-	GlobalGet            = 0x23,
-	GlobalSet            = 0x24,
-	TableGet             = 0x25,
-	TableSet             = 0x26,
-	Extension            = 0xFC,
-	I32Load              = 0x28,
-	I64Load              = 0x29,
-	F32Load              = 0x2A,
-	F64Load              = 0x2B,
-	I32Load8s            = 0x2C,
-	I32Load8u            = 0x2D,
-	I32Load16s           = 0x2E,
-	I32Load16u           = 0x2F,
-	I64Load8s            = 0x30,
-	I64Load8u            = 0x31,
-	I64Load16s           = 0x32,
-	I66Load16u           = 0x33,
-	I64Load32s           = 0x34,
-	I64Load32u           = 0x35,
-	I32Store             = 0x36,
-	I64Store             = 0x37,
-	F32Store             = 0x38,
-	F64Store             = 0x39,
-	I32Store8            = 0x3A,
-	I32Store16           = 0x3B,
-	I64Store8            = 0x3C,
-	I64Store16           = 0x3D,
-	I64Store32           = 0x3E,
-	MemorySize           = 0x3F,
-	MemoryGrow           = 0x40,
-	I32Const             = 0x41,
-	I64Const             = 0x42,
-	F32Const             = 0x43,
-	F64Const             = 0x44,
-	I32Eqz               = 0x45,
-	I32Eq                = 0x46,
-	I32Ne                = 0x47,
-	I32LtS               = 0x48,
-	I32LtU               = 0x49,
-	I32GtS               = 0x4A,
-	I32GtU               = 0x4B,
-	I32LeS               = 0x4C,
-	I32LeU               = 0x4D,
-	I32GeS               = 0x4E,
-	I32GeU               = 0x4F,
-	I64Eqz               = 0x50,
-	I64Eq                = 0x51,
-	I64Ne                = 0x52,
-	I64LtS               = 0x53,
-	I64LtU               = 0x54,
-	I64GtS               = 0x55,
-	I64GtU               = 0x56,
-	I64LeS               = 0x57,
-	I64LeU               = 0x58,
-	I64GeS               = 0x59,
-	I64GeU               = 0x5A,
-	F32Eq                = 0x5B,
-	F32Ne                = 0x5C,
-	F32Lt                = 0x5D,
-	F32Gt                = 0x5E,
-	F32Le                = 0x5F,
-	F32Ge                = 0x60,
-	F64Eq                = 0x61,
-	F64Ne                = 0x62,
-	F64Lt                = 0x63,
-	F64Gt                = 0x64,
-	F64Le                = 0x65,
-	F64Ge                = 0x66,
-	I32Clz               = 0x67,
-	I32Ctz               = 0x68,
-	I32Popcnt            = 0x69,
-	I32Add               = 0x6A,
-	I32Sub               = 0x6B,
-	I32Mul               = 0x6C,
-	I32DivS              = 0x6D,
-	I32DivU              = 0x6E,
-	I32RemS              = 0x6F,
-	I32RemU              = 0x70,
-	I32And               = 0x71,
-	I32Or                = 0x72,
-	I32Xor               = 0x73,
-	I32Shl               = 0x74,
-	I32ShrS              = 0x75,
-	I32ShrU              = 0x76,
-	I32Rotl              = 0x77,
-	I32Rotr              = 0x78,
-	I64Clz               = 0x79,
-	I64Ctz               = 0x7A,
-	I64Popcnt            = 0x7B,
-	I64Add               = 0x7C,
-	I64Sub               = 0x7D,
-	I64Mul               = 0x7E,
-	I64DivS              = 0x7F,
-	I64DivU              = 0x80,
-	I64RemS              = 0x81,
-	I64RemU              = 0x82,
-	I64And               = 0x83,
-	I64Or                = 0x84,
-	I64Xor               = 0x85,
-	I64Shl               = 0x86,
-	I64ShrS              = 0x87,
-	I64ShrU              = 0x88,
-	I64Rotl              = 0x89,
-	I64Rotr              = 0x8A,
-	F32Abs               = 0x8B,
-	F32Neg               = 0x8C,
-	F32Ceil              = 0x8D,
-	F32Floor             = 0x8E,
-	F32Trunc             = 0x8F,
-	F32Nearest           = 0x90,
-	F32Sqrt              = 0x91,
-	F32Add               = 0x92,
-	F32Sub               = 0x93,
-	F32Mul               = 0x94,
-	F32Div               = 0x95,
-	F32Min               = 0x96,
-	F32Max               = 0x97,
-	F32Copysign          = 0x98,
-	F64Abs               = 0x99,
-	F64Neg               = 0x9A,
-	F64Ceil              = 0x9B,
-	F64Floor             = 0x9C,
-	F64Trunc             = 0x9D,
-	F64Nearest           = 0x9E,
-	F64Sqrt              = 0x9F,
-	F64Add               = 0xA0,
-	F64Sub               = 0xA1,
-	F64Mul               = 0xA2,
-	F64Div               = 0xA3,
-	F64Min               = 0xA4,
-	F64Max               = 0xA5,
-	F64Copysign          = 0xA6,
-	I32WrapI64           = 0xA7,
-	I32TruncF32S         = 0xA8,
-	I32TruncF32U         = 0xA9,
-	I32TruncF64S         = 0xAA,
-	I32TruncF64U         = 0xAB,
-	I64ExtendI32S        = 0xAC,
-	I64ExtendI32U        = 0xAD,
-	I64TruncF32S         = 0xAE,
-	I64TruncF32U         = 0xAF,
-	I64TruncF64S         = 0xB0,
-	I64TruncF64U         = 0xB1,
-	F32ConvertI32S       = 0xB2,
-	F32ConvertI32U       = 0xB3,
-	F32ConvertI64S       = 0xB4,
-	F32ConvertI64        = 0xB5,
-	F32DemoteF64         = 0xB6,
-	F64ConvertI32S       = 0xB7,
-	F64ConvertI32U       = 0xB8,
-	F64ConvertI64S       = 0xB9,
-	F64ConvertI64U       = 0xBA,
-	F64PromoteF32        = 0xBB,
-	I32ReinterpretF32    = 0xBC,
-	I64ReinterpretF64    = 0xBD,
-	F32ReinterpretI32    = 0xBE,
-	F64ReinterpretI64    = 0xBF,
-	I32Extend8S          = 0xC0,
-	I32Extend16S         = 0xC1,
-	I64Extend8S          = 0xC2,
-	I64Extend16S         = 0xC3,
-	I64Extend32S         = 0xC4,
-}
-
-
-#[derive(PartialEq, Debug, Clone)]
-pub enum Instruction {
-	Unreachable,
-	Nop,
-	Block { block_type: u8, instructions: Vec<Instruction> },
-	Loop { block_type: u8, instructions: Vec<Instruction> },
-	If { block_type: u8, if_instructions: Vec<Instruction>, else_instructions: Vec<Instruction> },
-	Br { label_index: u8 },
-	BrIf { label_index: u8 },
-	BrTable { label_indexes: Vec<u8> },
-	Return,
-	Call { function_index: usize },
-	CallIndirect { table_index: usize, type_index: usize },
-
-	RefNull,
-	RefIsNull,
-	RefFunc,
-
-	Drop,
-	Select,
-	SelectValueType,
-
-	LocalGet(usize),
-	LocalSet(usize),
-	LocalTee(usize),
-
-	GlobalGet(usize),
-	GlobalSet(usize),
-
-	TableGet(usize),
-	TableSet(usize),
-	Extension,
-
-	I32Load(MemArg),
-	I64Load(MemArg),
-	F32Load(MemArg),
-	F64Load(MemArg),
-	I32Load8s(MemArg),
-	I32Load8u(MemArg),
-	I32Load16s(MemArg),
-	I32Load16u(MemArg),
-	I64Load8s(MemArg),
-	I64Load8u(MemArg),
-	I64Load16s(MemArg),
-	I66Load16u(MemArg),
-	I64Load32s(MemArg),
-	I64Load32u(MemArg),
-	I32Store(MemArg),
-	I64Store(MemArg),
-	F32Store(MemArg),
-	F64Store(MemArg),
-	I32Store8(MemArg),
-	I32Store16(MemArg),
-	I64Store8(MemArg),
-	I64Store16(MemArg),
-	I64Store32(MemArg),
-
-
-	I32Const(i32),
-	I64Const(i64),
-	F32Const(f32),
-	F64Const(f64),
-	I32Eqz,
-	I32Eq,
-	I32Ne,
-	I32LtS,
-	I32LtU,
-	I32GtS,
-	I32GtU,
-	I32LeS,
-	I32LeU,
-	I32GeS,
-	I32GeU,
-
-	I64Eqz,
-	I64Eq,
-	I64Ne,
-	I64LtS,
-	I64LtU,
-	I64GtS,
-	I64GtU,
-	I64LeS,
-	I64LeU,
-	I64GeS,
-	I64GeU,
-
-	F32Eq,
-	F32Ne,
-	F32Lt,
-	F32Gt,
-	F32Le,
-	F32Ge,
-
-	F64Eq,
-	F64Ne,
-	F64Lt,
-	F64Gt,
-	F64Le,
-	F64Ge,
-
-	I32Clz,
-	I32Ctz,
-	I32Popcnt,
-	I32Add,
-	I32Sub,
-	I32Mul,
-	I32DivS,
-	I32DivU,
-	I32RemS,
-	I32RemU,
-	I32And,
-	I32Or,
-	I32Xor,
-	I32Shl,
-	I32ShrS,
-	I32ShrU,
-	I32Rotl,
-	I32Rotr,
-
-	I64Clz,
-	I64Ctz,
-	I64Popcnt,
-	I64Add,
-	I64Sub,
-	I64Mul,
-	I64DivS,
-	I64DivU,
-	I64RemS,
-	I64RemU,
-	I64And,
-	I64Or,
-	I64Xor,
-	I64Shl,
-	I64ShrS,
-	I64ShrU,
-	I64Rotl,
-	I64Rotr,
-
-	F32Abs,
-	F32Neg,
-	F32Ceil,
-	F32Floor,
-	F32Trunc,
-	F32Nearest,
-	F32Sqrt,
-	F32Add,
-	F32Sub,
-	F32Mul,
-	F32Div,
-	F32Min,
-	F32Max,
-	F32Copysign,
-
-	F64Abs,
-	F64Neg,
-	F64Ceil,
-	F64Floor,
-	F64Trunc,
-	F64Nearest,
-	F64Sqrt,
-	F64Add,
-	F64Sub,
-	F64Mul,
-	F64Div,
-	F64Min,
-	F64Max,
-	F64Copysign,
-
-	I32WrapI64,
-	I32TruncF32S,
-	I32TruncF32U,
-	I32TruncF64S,
-	I32TruncF64U,
-	I64ExtendI32S,
-	I64ExtendI32U,
-	I64TruncF32S,
-	I64TruncF32U,
-	I64TruncF64S,
-	I64TruncF64U,
-	F32ConvertI32S,
-	F32ConvertI32U,
-	F32ConvertI64S,
-	F32ConvertI64,
-	F32DemoteF64,
-	F64ConvertI32S,
-	F64ConvertI32U,
-	F64ConvertI64S,
-	F64ConvertI64U,
-	F64PromoteF32,
-	I32ReinterpretF32,
-	I64ReinterpretF64,
-	F32ReinterpretI32,
-	F64ReinterpretI64,
-
-	I32Extend8S,
-	I32Extend16S,
-	I64Extend8S,
-	I64Extend16S,
-	I64Extend32S,
-}
-
-/// https://webassembly.github.io/spec/core/binary/types.html
-#[derive(Eq, PartialEq, Debug, TryFromPrimitive)]
-#[repr(u8)]
-pub enum Type {
-	I32 = 0x7F,
-	I64 = 0x7E,
-	F32 = 0x7D,
-	F64 = 0x7C,
-	V128 = 0x7B,
-	FuncRef = 0x70,
-	ExternRef = 0x6F,
-	Function = 0x60,
-	Const = 0x00,
-	Var = 0x01,
-}
-
-/// https://webassembly.github.io/spec/core/binary/types.html#limits
-#[derive(Eq, PartialEq, Debug, TryFromPrimitive)]
-#[repr(u8)]
-pub enum LimitKind {
-	Min = 0x00,
-	MinMax = 0x01,
-}
-
-#[derive(Eq, PartialEq, Debug, Default)]
-pub struct FunctionSignature {
-	pub params: Vec<Type>,
-	pub results: Vec<Type>,
-}
-
-/// https://webassembly.github.io/spec/core/binary/modules.html#export-section
-#[derive(Eq, PartialEq, Debug, TryFromPrimitive)]
-#[repr(u8)]
-pub enum ExportKind {
-	Function = 0x00,
-	Table = 0x01,
-	Memory = 0x02,
-	Global = 0x03,
-}
-
-#[derive(PartialEq, Debug, Default)]
-pub struct Function {
-	pub outer_name: Option<String>,
-	pub signature: Rc<FunctionSignature>,
-	pub num_locals: usize,
-	pub body: Vec<Instruction>,
-}
-
-#[derive(Default, Debug, PartialEq, Eq, Clone)]
-pub struct MemArg {
-	align: usize,
-	offset: usize,
-}
-
-const MEMORY_PAGE_SIZE: usize = 4096;
-
-#[derive(Default, PartialEq)]
-pub struct Memory {
-	data: Vec<u8>,
-	/// Minimum and maximum page limit.
-	limit: Range<usize>,
-	name: Option<String>,
-}
-
-impl fmt::Debug for Memory {
-	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-		// Do not print self.data because it is very large
-		f.debug_struct("Memory")
-			.field("limit", &self.limit)
-			.field("name", &self.name)
-			.finish()
-	}
-}
-
-impl Memory {
-	fn grow(&mut self, new_page_size: usize) {
-		assert!(new_page_size >= self.limit.start, "Memory grow too small");
-		assert!(new_page_size <= self.limit.end, "Memory grow too large");
-
-		log::debug!("Memory grow to {} pages", new_page_size);
-		let new_byte_size = MEMORY_PAGE_SIZE * new_page_size;
-		self.data.resize(new_byte_size, 0);
-	}
-
-	fn page_size(&self) -> usize {
-		self.data.len() / MEMORY_PAGE_SIZE
-	}
-}
-
-/// https://webassembly.github.io/spec/core/binary/modules.html#data-section
-#[derive(Eq, PartialEq, Debug, TryFromPrimitive)]
-#[repr(u8)]
-pub enum DataMode {
-	ActiveMemory0 = 0x00,
-	Passive = 0x01,
-	Active = 0x02,
-}
-
-/// A parsed WebAssembly module.
-#[derive(Default, Debug, PartialEq)]
-pub struct Module {
-	functions: Vec<Function>,
-	memories: Vec<Memory>,
-}
-
-impl Module {
-	/// Parses `bytecode` into a [Module] or a [ParsingError].
-	pub fn new(bytecode: impl io::Read) -> Result<Module, ParsingError> {
-		let parser = Parser {
-			bytecode,
-			module: Module::default(),
-			types: Vec::new(),
-		};
-		parser.parse_module()
-	}
-}
+use crate::parse::{
+	error::*,
+	types::*,
+};
+use crate::exec::{types::*};
 
 pub struct Parser<ByteIter: io::Read> {
 	types: Vec<Rc<FunctionSignature>>,
+	/// This is the index from which `module.functions` contains `WasmFunction`s. All functions below this index are extern
+	/// functions.
+	wasm_functions_index: usize,
 	module: Module,
 	bytecode: ByteIter,
 }
 
 impl<ByteIter: io::Read> Parser<ByteIter> {
+	pub fn parse_module(bytecode: ByteIter) -> Result<Module, ParsingError> {
+		let parser = Parser {
+			bytecode,
+			module: Module::default(),
+			wasm_functions_index: 0,
+			types: Vec::new(),
+		};
+		parser.parse_module_internal()
+	}
+
 	/// Reads one byte from [self.bytecode].
 	fn read_byte(&mut self) -> Result<u8, io::Error> {
 		let mut buf = [0u8; 1];
@@ -598,11 +82,11 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 		for _ in 0..num_functions {
 			let function_type_index = leb128::read::unsigned(&mut self.bytecode)? as usize;
 			let function = Function {
-				outer_name: None,
+				export_name: None,
 				signature: Rc::clone(&self.types[function_type_index]),
 				..Function::default()
 			};
-			self.module.functions.push(function);
+			self.module.functions.push(Callable::WasmFunction(function));
 		}
 		Ok(())
 	}
@@ -622,7 +106,10 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 		match kind {
 			ExportKind::Function => {
-				self.module.functions[index].outer_name = Some(name);
+				match &mut self.module.functions[index] {
+					Callable::WasmFunction(function) => function.export_name = Some(name),
+					_ => return Err(ParsingError::ModifyExternFunction),
+				}
 			},
 			ExportKind::Memory => {
 				self.module.memories[index].name = Some(name);
@@ -638,7 +125,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 		log::trace!("Parsing export section with {} functions", num_exports);
 
 		for _ in 0..num_exports {
-			let export = self.parse_export()?;
+			self.parse_export()?;
 		}
 		Ok(())
 	}
@@ -873,12 +360,22 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 		Ok(instructions)
 	}
 
-	fn parse_function_code(&mut self, index: usize) -> Result<(), ParsingError> {
-		let _code_size = leb128::read::unsigned(&mut self.bytecode)? as usize;
+	fn parse_locals(&mut self, function_index: usize) -> Result<(), ParsingError> {
 		let num_locals = leb128::read::unsigned(&mut self.bytecode)? as usize;
-		let body = self.parse_instructions()?;
-		self.module.functions[index].num_locals = num_locals;
-		self.module.functions[index].body = body;
+		for _ in 0..num_locals {
+			// A local declaration is a tuple of (local type count, local type)
+			let num_locals_of_type = leb128::read::unsigned(&mut self.bytecode)? as usize;
+			let local_type = Type::try_from(self.read_byte()?)?;
+			let locals_of_type = iter::repeat(local_type).take(num_locals_of_type);
+			<&mut Function>::try_from(&mut self.module.functions[function_index])?.locals.extend(locals_of_type);
+		}
+		Ok(())
+	}
+
+	fn parse_function_code(&mut self, function_index: usize) -> Result<(), ParsingError> {
+		let _code_size = leb128::read::unsigned(&mut self.bytecode)? as usize;
+		self.parse_locals(function_index)?;
+		<&mut Function>::try_from(&mut self.module.functions[function_index])?.body = self.parse_instructions()?;
 		Ok(())
 	}
 
@@ -886,8 +383,10 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 		let num_functions = leb128::read::unsigned(&mut self.bytecode)? as usize;
 		log::trace!("Parsing code section with {} functions", num_functions);
 
-		for index in 0..num_functions {
-			self.parse_function_code(index)?;
+		for i in 0..num_functions {
+			// Skip extern functions when assigning code body to WASM functions
+			let function_index = self.wasm_functions_index + i;
+			self.parse_function_code(function_index)?;
 		}
 		Ok(())
 	}
@@ -895,6 +394,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 	fn parse_import_section(&mut self) -> Result<(), ParsingError> {
 		let num_imports = leb128::read::unsigned(&mut self.bytecode)? as usize;
 		log::trace!("Parsing import section with {} imports", num_imports);
+		self.wasm_functions_index = num_imports;
 		for _ in 0..num_imports {
 			let module_name = self.read_string()?;
 			let field_name = self.read_string()?;
@@ -903,13 +403,13 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 			match import_kind {
 				ExportKind::Function => {
 					let import_function = Function {
-						outer_name: Some(format!("IMPORT:{}.{}", module_name, field_name)),
+						export_name: Some(format!("IMPORT:{}.{}", module_name, field_name)),
 						signature: Rc::clone(&self.types[signature_index]),
-						num_locals: 0,
-						body: vec![]
+						locals: Vec::new(),
+						body: Vec::new(),
 					};
 					log::debug!("Import {:?}", import_function);
-					self.module.functions.push(import_function);
+					self.module.functions.push(Callable::WasmFunction(import_function));
 				},
 				_ => unimplemented!(),
 			}
@@ -922,7 +422,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 		log::trace!("Parsing memory section with {} imports", num_mems);
 		for _ in 0..num_mems {
 			let memory_limit_kind = LimitKind::try_from(self.read_byte()?)?;
-			let memory_limit = match memory_limit_kind {
+			let page_limit = match memory_limit_kind {
 				LimitKind::Min => {
 					let min = leb128::read::unsigned(&mut self.bytecode)? as usize;
 					min..(u32::MAX as usize)
@@ -933,11 +433,12 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 					min..max
 				}
 			};
-			let mut memory = Memory::default();
-			memory.limit = memory_limit.clone();
-			memory.grow(memory_limit.start);
-			log::trace!("{:?}", memory);
-			self.module.memories.push(memory);
+			let memory_blueprint = MemoryBlueprint {
+				page_limit,
+				name: None
+			};
+			log::trace!("{:?}", memory_blueprint);
+			self.module.memories.push(memory_blueprint);
 		}
 		Ok(())
 	}
@@ -964,14 +465,13 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 	}
 
 	fn parse_custom_section(&mut self, section_size: u64) -> Result<(), ParsingError> {
-		let name = self.read_string()?;
-		log::trace!("Skipping custom section {} with {} bytes", name, section_size);
 		let mut sink = vec![0u8; section_size as usize];
-		self.bytecode.read_exact(&mut sink);
+		self.bytecode.read_exact(&mut sink)?;
+		log::trace!("Skipping custom section with {} bytes", section_size);
 		Ok(())
 	}
 
-	pub fn parse_module(mut self) -> Result<Module, ParsingError> {
+	fn parse_module_internal(mut self) -> Result<Module, ParsingError> {
 		let mut magic = [0u8; 4];
 		self.bytecode.read_exact(&mut magic)?;
 		if magic != [0x00, 0x61, 0x73, 0x6D] {
@@ -1006,123 +506,3 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 		Ok(self.module)
 	}
 }
-
-#[derive(Debug, Error)]
-pub enum ParsingError {
-	#[error("The module does not start with the magic constant 0x00 0x61 0x73 0x6D")]
-	NotAWasmModule,
-
-	#[error("The version {0:?} is not supported")]
-	IllegalVersion([u8; 4]),
-
-	#[error("Unknown section id: {0}")]
-	UnknownSectionId(#[from] TryFromPrimitiveError<SectionId>),
-
-	#[error("Unknown type: {0}")]
-	UnknownType(#[from] TryFromPrimitiveError<Type>),
-
-	#[error("Unknown export kind: {0}")]
-	UnknownExport(#[from] TryFromPrimitiveError<ExportKind>),
-
-	#[error("Unknown opcode: {0}")]
-	UnknownOpcode(#[from] TryFromPrimitiveError<Opcode>),
-
-	#[error("Unknown limit: {0}")]
-	UnknownLimit(#[from] TryFromPrimitiveError<LimitKind>),
-
-	#[error("Unknown data mode: {0}")]
-	UnknownDataMode(#[from] TryFromPrimitiveError<DataMode>),
-
-	#[error("IoError: {0}")]
-	IoError(#[from] io::Error),
-
-	#[error("Expected opcode {0:?}")]
-	ExpectedOpcode(Opcode),
-
-	#[error("Leb128Error: {0}")]
-	Leb128Error(#[from] leb128::read::Error),
-
-	#[error("Utf8Error: {0}")]
-	Utf8Error(#[from] string::FromUtf8Error),
-}
-
-/*#[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn type_section() {
-		let wasm = [
-			0x02, // num types
-			// func type 0
-			0x60, // func
-			0x02, // num params
-			0x7f, // i32
-			0x7f, // i32
-			0x01, // num results
-			0x7f, // i32
-			// func type 1
-			0x60, // func
-			0x01, // num params
-			0x7f, // i32
-			0x01, // num results
-			0x7f, // i32
-		];
-		let mut parser = Parser { bytecode: wasm.as_slice() };
-		let actual_type_section = parser.parse_type_section().unwrap();
-		let expected_type_section = [
-			FunctionSignature {
-				params: vec![
-					Type::I32,
-					Type::I32,
-				],
-				results: vec![
-					Type::I32,
-				],
-			},
-			FunctionSignature {
-				params: vec![
-					Type::I32,
-				],
-				results: vec![
-					Type::I32,
-				],
-			},
-		];
-		assert_eq!(actual_type_section, expected_type_section);
-	}
-
-	#[test]
-	fn function_section() {
-		let wasm = [
-			0x02, // num functions
-			0x00, // function type 0
-			0x01, // function type 1
-		];
-		let mut parser = Parser { bytecode: wasm.as_slice() };
-		let actual_function_section = parser.parse_function_section().unwrap();
-		let expected_function_section = [0, 1];
-		assert_eq!(actual_function_section, expected_function_section);
-	}
-
-	#[test]
-	fn export_section() {
-		let wasm = [
-			0x01, // num exports
-			0x06, // export name, string length of "addTwo"
-			0x61, 0x64, 0x64, 0x54, 0x77, 0x6f, // export name "addTwo"
-			0x00, // export kind
-			0x00, // export func index
-		];
-		let mut parser = Parser { bytecode: wasm.as_slice() };
-		let actual_export_section = parser.parse_export_section().unwrap();
-		let expected_export_section = [
-			Export {
-				name: "addTwo".to_owned(),
-				kind: ExportKind::Function,
-				index: 0
-			}
-		];
-		assert_eq!(actual_export_section, expected_export_section);
-	}
-}*/
