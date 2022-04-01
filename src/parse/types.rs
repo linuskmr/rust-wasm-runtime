@@ -1,5 +1,8 @@
+use std::io;
 use std::ops::Range;
 use num_enum::TryFromPrimitive;
+use crate::exec::Functions;
+use crate::parse::{Parser, ParsingError};
 
 /// <https://webassembly.github.io/spec/core/binary/modules.html#sections>
 #[derive(Eq, PartialEq, Debug, TryFromPrimitive)]
@@ -256,5 +259,19 @@ pub enum DataMode {
 pub struct MemoryBlueprint {
 	/// Minimum and maximum page limit.
 	pub(crate) page_limit: Range<usize>,
-	pub(crate) name: Option<String>,
+	pub(crate) export_name: Option<String>,
+}
+
+/// A parsed WebAssembly module.
+#[derive(Default, Debug)]
+pub struct Module {
+	pub(crate) functions: Functions,
+	pub(crate) memory_blueprint: Option<MemoryBlueprint>,
+}
+
+impl Module {
+	/// Parses `bytecode` into a [Module] or a [ParsingError].
+	pub fn new(bytecode: impl io::Read) -> Result<Module, ParsingError> {
+		Parser::parse_module(bytecode)
+	}
 }

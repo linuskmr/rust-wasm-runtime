@@ -1,7 +1,7 @@
-use std::{fmt, io};
+use std::fmt;
+use std::fmt::Formatter;
 use std::rc::Rc;
-use crate::exec::Memory;
-use crate::parse::{ParsingError, Type, Parser, MemoryBlueprint};
+use crate::parse::{ParsingError, Type};
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Instruction {
@@ -218,14 +218,46 @@ pub enum Value {
 	Var
 }
 
+impl TryFrom<Value> for i32 {
+	type Error = ();
+
+	fn try_from(value: Value) -> Result<Self, Self::Error> {
+		match value {
+			Value::I32(val) => Ok(val),
+			_ => Err(()),
+		}
+	}
+}
+
 #[derive(Eq, PartialEq, Debug, Default, Clone)]
 pub struct FunctionSignature {
 	pub params: Vec<Type>,
 	pub results: Vec<Type>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct Identifier {
+	pub(crate) module: String,
+	pub(crate) field: String,
+}
+
+impl From<(&'static str, &'static str)> for Identifier {
+	fn from(identifier: (&'static str, &'static str)) -> Self {
+		Self {
+			module: identifier.0.to_owned(),
+			field: identifier.1.to_owned()
+		}
+	}
+}
+
+impl fmt::Display for Identifier {
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		write!(f, "{}.{}", self.module, self.field)
+	}
+}
+
 #[derive(PartialEq, Debug, Default, Clone)]
-pub struct Function {
+pub struct WasmFunction {
 	pub export_name: Option<String>,
 	pub signature: Rc<FunctionSignature>,
 	pub locals: Vec<Type>,
@@ -246,43 +278,73 @@ pub struct MemArg {
 /// * Creating a closure for all WebAssembly functions, which saves their instructions. This implies that every function
 /// has to be `box`ed, which is inefficient.
 pub enum Callable {
-	WasmFunction(Function),
-	RustClosure(Box<dyn Fn()>),
-	RustFunction(fn()),
+	WasmFunction(WasmFunction),
+	RustClosure {
+		name: Identifier,
+		closure: Box<dyn Fn()>
+	},
+	RustFunction {
+		name: Identifier,
+		function: fn()
+	},
 }
 
 impl fmt::Debug for Callable {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
 			Callable::WasmFunction(function) => function.fmt(f),
-			_ => write!(f, "Extern rust function"),
+			Callable::RustFunction { name, .. } => {
+				f.debug_struct("RustFunction")
+					.field("name", name)
+					.field("function", &"<opaque>")
+					.finish()
+			},
+			Callable::RustClosure { name, .. } => {
+				f.debug_struct("RustClosure")
+					.field("name", name)
+					.field("closure", &"<opaque>")
+					.finish()
+			},
 		}
 	}
 }
 
-/// A parsed WebAssembly module.
-#[derive(Default, Debug)]
-pub struct Module {
-	pub(crate) functions: Vec<Callable>,
-	pub(crate) memories: Vec<MemoryBlueprint>,
-}
-
-impl Module {
-	/// Parses `bytecode` into a [Module] or a [ParsingError].
-	pub fn new(bytecode: impl io::Read) -> Result<Module, ParsingError> {
-		Parser::parse_module(bytecode)
+impl fmt::Display for Callable {
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		match self {
+			Callable::WasmFunction(function) => {
+				match &function.export_name {
+					Some(name) => write!(f, "{}", name),
+					None => write!(f, "None")
+				}
+			},
+			Callable::RustFunction { name, .. } => write!(f, "{}", name),
+			Callable::RustClosure { name, .. } => write!(f, "{}", name),
+		}
 	}
 }
 
-// This convenience function makes it possible to convert a `Callable` stored in `module.functions` to a `Function`,
-// which is often needed.
-impl<'a> TryFrom<&'a mut Callable> for &'a mut Function {
-	type Error = ParsingError;
+#[derive(Debug, PartialEq, Eq)]
+pub struct ExternFunction {
+	pub(crate) name: Identifier,
+	pub(crate) signature: Rc<FunctionSignature>,
+}
 
-	fn try_from(callable: &'a mut Callable) -> Result<Self, Self::Error> {
-		match callable {
-			Callable::WasmFunction(function) => Ok(function),
-			_ => Err(ParsingError::ModifyExternFunction),
-		}
+#[derive(Default, Debug, PartialEq)]
+pub struct Functions {
+	pub(crate) imports: Vec<ExternFunction>,
+	pub(crate) wasm: Vec<WasmFunction>,
+}
+
+impl Functions {
+	pub(crate) fn get_wasm_function(&mut self, function_index: usize) -> Result<&mut WasmFunction, ParsingError> {
+		let wasm_len = self.wasm.len();
+		let imports_len = self.imports.len();
+		let total_len = wasm_len + imports_len;
+
+		let function_index = function_index.checked_sub(self.imports.len())
+			.ok_or(ParsingError::WasmFunctionOutOfRange { index: function_index, wasm_len, imports_len, total_len })?;
+		self.wasm.get_mut(function_index)
+			.ok_or(ParsingError::WasmFunctionOutOfRange { index: function_index,  wasm_len, imports_len, total_len })
 	}
 }

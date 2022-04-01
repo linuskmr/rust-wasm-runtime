@@ -29,8 +29,13 @@ pub enum ParsingError {
 	#[error("Unknown data mode: {0}")]
 	UnknownDataMode(#[from] TryFromPrimitiveError<DataMode>),
 
-	#[error("Can not modify an extern function")]
-	ModifyExternFunction,
+	#[error("Function access out of range. index={index} wasm_len={wasm_len} imports_len={imports_len} total_len={total_len}")]
+	WasmFunctionOutOfRange {
+		index: usize,
+		wasm_len: usize,
+		imports_len: usize,
+		total_len: usize
+	},
 
 	#[error("IoError: {0}")]
 	IoError(#[from] io::Error),

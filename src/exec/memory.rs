@@ -15,11 +15,13 @@ pub struct Memory {
 
 impl From<MemoryBlueprint> for Memory {
 	fn from(blueprint: MemoryBlueprint) -> Self {
-		Self {
-			data: vec![0u8; blueprint.page_limit.start],
-			page_limit: blueprint.page_limit,
-			name: blueprint.name
-		}
+		let mut memory = Memory {
+			data: Vec::new(),
+			page_limit: blueprint.page_limit.clone(),
+			name: blueprint.export_name
+		};
+		memory.grow(blueprint.page_limit.start);
+		memory
 	}
 }
 
@@ -34,10 +36,6 @@ impl fmt::Debug for Memory {
 }
 
 impl Memory {
-	pub(crate) fn init(&mut self) {
-		self.grow(self.page_limit.start);
-	}
-
 	pub(crate) fn grow(&mut self, new_page_size: usize) {
 		assert!(new_page_size >= self.page_limit.start, "Memory grow too small");
 		assert!(new_page_size <= self.page_limit.end, "Memory grow too large");
@@ -47,7 +45,11 @@ impl Memory {
 		self.data.resize(new_byte_size, 0);
 	}
 
-	fn page_size(&self) -> usize {
+	pub fn page_size(&self) -> usize {
 		self.data.len() / MEMORY_PAGE_SIZE
+	}
+
+	pub fn data(&self) -> &[u8] {
+		&self.data
 	}
 }

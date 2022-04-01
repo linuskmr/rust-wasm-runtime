@@ -8,9 +8,6 @@ use crate::exec::{types::*};
 
 pub struct Parser<ByteIter: io::Read> {
 	types: Vec<Rc<FunctionSignature>>,
-	/// This is the index from which `module.functions` contains `WasmFunction`s. All functions below this index are extern
-	/// functions.
-	wasm_functions_index: usize,
 	module: Module,
 	bytecode: ByteIter,
 }
@@ -20,7 +17,6 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 		let parser = Parser {
 			bytecode,
 			module: Module::default(),
-			wasm_functions_index: 0,
 			types: Vec::new(),
 		};
 		parser.parse_module_internal()
@@ -40,7 +36,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 			panic!("Illegal type for function");
 		}
 
-		{ // Parse params
+		{  // Parse params
 			let num_params = leb128::read::unsigned(&mut self.bytecode)?;
 			function_type.params.reserve_exact(num_params as usize);
 			for _ in 0..num_params {
@@ -50,7 +46,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 			}
 		}
 
-		{ // Parse results
+		{  // Parse results
 			let num_results = leb128::read::unsigned(&mut self.bytecode)?;
 			function_type.results.reserve_exact(num_results as usize);
 			for _ in 0..num_results {
@@ -81,12 +77,12 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 		for _ in 0..num_functions {
 			let function_type_index = leb128::read::unsigned(&mut self.bytecode)? as usize;
-			let function = Function {
+			let function = WasmFunction {
 				export_name: None,
 				signature: Rc::clone(&self.types[function_type_index]),
-				..Function::default()
+				..WasmFunction::default()
 			};
-			self.module.functions.push(Callable::WasmFunction(function));
+			self.module.functions.wasm.push(function);
 		}
 		Ok(())
 	}
@@ -106,13 +102,11 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 		match kind {
 			ExportKind::Function => {
-				match &mut self.module.functions[index] {
-					Callable::WasmFunction(function) => function.export_name = Some(name),
-					_ => return Err(ParsingError::ModifyExternFunction),
-				}
+				self.module.functions.get_wasm_function(index)?.export_name = Some(name);
 			},
 			ExportKind::Memory => {
-				self.module.memories[index].name = Some(name);
+				// TODO: Return error instead of unwrap
+				self.module.memory_blueprint.as_mut().unwrap().export_name = Some(name);
 			}
 			_ => unimplemented!()
 		}
@@ -367,7 +361,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 			let num_locals_of_type = leb128::read::unsigned(&mut self.bytecode)? as usize;
 			let local_type = Type::try_from(self.read_byte()?)?;
 			let locals_of_type = iter::repeat(local_type).take(num_locals_of_type);
-			<&mut Function>::try_from(&mut self.module.functions[function_index])?.locals.extend(locals_of_type);
+			self.module.functions.get_wasm_function(function_index)?.locals.extend(locals_of_type);
 		}
 		Ok(())
 	}
@@ -375,7 +369,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 	fn parse_function_code(&mut self, function_index: usize) -> Result<(), ParsingError> {
 		let _code_size = leb128::read::unsigned(&mut self.bytecode)? as usize;
 		self.parse_locals(function_index)?;
-		<&mut Function>::try_from(&mut self.module.functions[function_index])?.body = self.parse_instructions()?;
+		self.module.functions.get_wasm_function(function_index)?.body = self.parse_instructions()?;
 		Ok(())
 	}
 
@@ -385,7 +379,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 		for i in 0..num_functions {
 			// Skip extern functions when assigning code body to WASM functions
-			let function_index = self.wasm_functions_index + i;
+			let function_index = self.module.functions.imports.len() + i;
 			self.parse_function_code(function_index)?;
 		}
 		Ok(())
@@ -394,7 +388,6 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 	fn parse_import_section(&mut self) -> Result<(), ParsingError> {
 		let num_imports = leb128::read::unsigned(&mut self.bytecode)? as usize;
 		log::trace!("Parsing import section with {} imports", num_imports);
-		self.wasm_functions_index = num_imports;
 		for _ in 0..num_imports {
 			let module_name = self.read_string()?;
 			let field_name = self.read_string()?;
@@ -402,14 +395,15 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 			let signature_index = leb128::read::unsigned(&mut self.bytecode)? as usize;
 			match import_kind {
 				ExportKind::Function => {
-					let import_function = Function {
-						export_name: Some(format!("IMPORT:{}.{}", module_name, field_name)),
+					let extern_function = ExternFunction {
+						name: Identifier {
+							module: module_name,
+							field: field_name
+						},
 						signature: Rc::clone(&self.types[signature_index]),
-						locals: Vec::new(),
-						body: Vec::new(),
 					};
-					log::debug!("Import {:?}", import_function);
-					self.module.functions.push(Callable::WasmFunction(import_function));
+					log::debug!("Import {:?}", extern_function);
+					self.module.functions.imports.push(extern_function);
 				},
 				_ => unimplemented!(),
 			}
@@ -419,7 +413,9 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 	fn parse_memory_section(&mut self) -> Result<(), ParsingError> {
 		let num_mems = leb128::read::unsigned(&mut self.bytecode)? as usize;
-		log::trace!("Parsing memory section with {} imports", num_mems);
+		log::trace!("Parsing memory section with {} memories", num_mems);
+		// TODO: Error instead of panic / assert
+		assert!(num_mems <= 1);
 		for _ in 0..num_mems {
 			let memory_limit_kind = LimitKind::try_from(self.read_byte()?)?;
 			let page_limit = match memory_limit_kind {
@@ -433,12 +429,9 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 					min..max
 				}
 			};
-			let memory_blueprint = MemoryBlueprint {
-				page_limit,
-				name: None
-			};
+			let memory_blueprint = MemoryBlueprint { page_limit, export_name: None };
 			log::trace!("{:?}", memory_blueprint);
-			self.module.memories.push(memory_blueprint);
+			self.module.memory_blueprint = Some(memory_blueprint);
 		}
 		Ok(())
 	}
