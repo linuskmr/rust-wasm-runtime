@@ -1,7 +1,7 @@
 use std::io;
 use std::ops::Range;
 use num_enum::TryFromPrimitive;
-use crate::exec::{Functions, Instruction};
+use crate::exec::Functions;
 use crate::parse::{Parser, ParsingError};
 
 /// <https://webassembly.github.io/spec/core/binary/modules.html#sections>

@@ -4,9 +4,10 @@ use rust_wasm_runtime::{
 };
 use std::error::Error;
 use std::fs;
+use tracing::{info, Level};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::builder().format_timestamp(None).init();
+    init();
 
     // let path = "target/wasm32-wasi/release/rust_wasm_runtime.wasm";
     let path = "example.wasm";
@@ -17,13 +18,25 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut instance = Instance::new(module);
     instance.start()?;
-    log::info!("Operand stack {:#?}", instance.operand_stack());
     if let Some(mem) = instance.memory() {
-        log::info!("Memory {:?}", &mem.data()[0..50]);
+        info!("Memory {:?}", &mem.data()[0..50]);
     } else {
-        log::info!("no memory");
+        info!("no memory");
     }
 
 
     Ok(())
+}
+
+fn init() {
+    use tracing_subscriber::fmt::format::FmtSpan;
+
+    tracing_subscriber::fmt::fmt()
+        .with_file(true)
+        .with_line_number(true)
+        .with_max_level(Level::TRACE)
+        .with_target(false)
+        .without_time()
+        .with_span_events(FmtSpan::ENTER)
+        .init();
 }

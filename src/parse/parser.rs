@@ -1,5 +1,6 @@
 use std::{io, iter};
 use std::rc::Rc;
+use tracing::{trace, debug, error};
 use crate::parse::{
 	error::*,
 	types::*,
@@ -61,11 +62,11 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 	fn parse_type_section(&mut self) -> Result<Vec<Rc<FunctionSignature>>, ParsingError> {
 		let num_types = leb128::read::unsigned(&mut self.bytecode)? as usize;
-		log::trace!("Parsing type section with {} types", num_types);
+		trace!("Parsing type section with {} types", num_types);
 		let mut types = Vec::with_capacity(num_types);
 		for _ in 0..num_types {
 			let function_type = self.parse_function_type()?;
-			log::debug!("{:?}", function_type);
+			debug!("{:?}", function_type);
 			types.push(Rc::new(function_type));
 		}
 		Ok(types)
@@ -73,11 +74,12 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 	fn parse_function_section(&mut self) -> Result<(), ParsingError> {
 		let num_functions = leb128::read::unsigned(&mut self.bytecode)? as usize;
-		log::trace!("Parsing function section with {} functions", num_functions);
+		trace!("Parsing function section with {} functions", num_functions);
 
 		for _ in 0..num_functions {
 			let function_type_index = leb128::read::unsigned(&mut self.bytecode)? as usize;
 			let function = WasmFunction {
+				index: self.module.functions.imports.len() + self.module.functions.wasm.len(),
 				export_name: None,
 				signature: Rc::clone(&self.types[function_type_index]),
 				..WasmFunction::default()
@@ -116,7 +118,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 	fn parse_export_section(&mut self) -> Result<(), ParsingError> {
 		let num_exports = leb128::read::unsigned(&mut self.bytecode)? as usize;
-		log::trace!("Parsing export section with {} functions", num_exports);
+		trace!("Parsing export section with {} functions", num_exports);
 
 		for _ in 0..num_exports {
 			self.parse_export()?;
@@ -346,7 +348,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 				Opcode::I64Extend32S => Instruction::I64Extend32S,
 				Opcode::Drop => Instruction::Drop,
 				other => {
-					log::error!("Unimplemented opcode {:?}", other);
+					error!("Unimplemented opcode {:?}", other);
 					continue
 				}
 			};
@@ -376,7 +378,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 	fn parse_code_section(&mut self) -> Result<(), ParsingError> {
 		let num_functions = leb128::read::unsigned(&mut self.bytecode)? as usize;
-		log::trace!("Parsing code section with {} functions", num_functions);
+		trace!("Parsing code section with {} functions", num_functions);
 
 		for i in 0..num_functions {
 			// Skip extern functions when assigning code body to WASM functions
@@ -388,7 +390,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 	fn parse_import_section(&mut self) -> Result<(), ParsingError> {
 		let num_imports = leb128::read::unsigned(&mut self.bytecode)? as usize;
-		log::trace!("Parsing import section with {} imports", num_imports);
+		trace!("Parsing import section with {} imports", num_imports);
 		for _ in 0..num_imports {
 			let module_name = self.read_string()?;
 			let field_name = self.read_string()?;
@@ -403,7 +405,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 						},
 						signature: Rc::clone(&self.types[signature_index]),
 					};
-					log::debug!("Import {:?}", extern_function);
+					debug!("Import {:?}", extern_function);
 					self.module.functions.imports.push(extern_function);
 				},
 				_ => unimplemented!(),
@@ -414,7 +416,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 	fn parse_memory_section(&mut self) -> Result<(), ParsingError> {
 		let num_mems = leb128::read::unsigned(&mut self.bytecode)? as usize;
-		log::trace!("Parsing memory section with {} memories", num_mems);
+		trace!("Parsing memory section with {} memories", num_mems);
 		// TODO: Error instead of panic / assert
 		assert!(num_mems <= 1);
 		for _ in 0..num_mems {
@@ -431,7 +433,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 				}
 			};
 			let memory_blueprint = MemoryBlueprint { page_limit, export_name: None, init: Vec::new() };
-			log::trace!("{:?}", memory_blueprint);
+			trace!("{:?}", memory_blueprint);
 			self.module.memory_blueprint = Some(memory_blueprint);
 		}
 		Ok(())
@@ -439,7 +441,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 
 	fn parse_data_section(&mut self) -> Result<(), ParsingError> {
 		let num_segments = leb128::read::unsigned(&mut self.bytecode)? as usize;
-		log::trace!("Parsing data section with {} segments", num_segments);
+		trace!("Parsing data section with {} segments", num_segments);
 
 		for _ in 0..num_segments {
 			let data_mode = DataMode::try_from(self.read_byte()?)?;
@@ -460,7 +462,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 						addr: segment_addr,
 						data: segment_data,
 					};
-					log::debug!("{:?}", data_segment);
+					debug!("{:?}", data_segment);
 					self.module.memory_blueprint.as_mut().unwrap().init.push(data_segment);
 				},
 				DataMode::Passive => unimplemented!(),
@@ -473,7 +475,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 	fn parse_custom_section(&mut self, section_size: u64) -> Result<(), ParsingError> {
 		let mut sink = vec![0u8; section_size as usize];
 		self.bytecode.read_exact(&mut sink)?;
-		log::trace!("Skipping custom section with {} bytes", section_size);
+		trace!("Skipping custom section with {} bytes", section_size);
 		Ok(())
 	}
 
@@ -493,7 +495,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 		while let Ok(section_id) = self.read_byte() {
 			let section_id = SectionId::try_from(section_id)?;
 			let section_size = leb128::read::unsigned(&mut self.bytecode)?;
-			log::trace!("Section {:?} with size {:?} bytes", section_id, section_size);
+			trace!("Section {:?} with size {:?} bytes", section_id, section_size);
 			match section_id {
 				SectionId::Type => self.types = self.parse_type_section()?,
 				SectionId::Function => self.parse_function_section()?,
@@ -504,7 +506,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 				SectionId::Data => self.parse_data_section()?,
 				SectionId::Custom => self.parse_custom_section(section_size)?,
 				other => {
-					log::error!("Unknown section {:?}. Ending parsing with Ok", other);
+					error!("Unknown section {:?}. Ending parsing with Ok", other);
 					break
 				},
 			}

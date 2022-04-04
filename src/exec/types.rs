@@ -1,5 +1,6 @@
 use std::fmt;
 use std::fmt::Formatter;
+use std::ops::Not;
 use std::rc::Rc;
 use crate::exec::error::ExecutionError;
 use crate::exec::instance::InstanceRef;
@@ -250,7 +251,7 @@ pub struct FunctionSignature {
 	pub results: Vec<Type>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Identifier {
 	pub(crate) module: String,
 	pub(crate) field: String,
@@ -267,12 +268,17 @@ impl From<(&'static str, &'static str)> for Identifier {
 
 impl fmt::Display for Identifier {
 	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-		write!(f, "{}.{}", self.module, self.field)
+		if self.module.is_empty().not() {
+			write!(f, "{}.{}", self.module, self.field)
+		} else {
+			write!(f, "{}", self.field)
+		}
 	}
 }
 
 #[derive(PartialEq, Debug, Default, Clone)]
 pub struct WasmFunction {
+	pub index: usize,
 	pub export_name: Option<String>,
 	pub signature: Rc<FunctionSignature>,
 	pub locals: Vec<Type>,
@@ -324,18 +330,24 @@ impl fmt::Debug for Callable {
 	}
 }
 
-impl fmt::Display for Callable {
-	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+impl Callable {
+	fn name(&self) -> String {
 		match self {
 			Callable::WasmFunction(function) => {
 				match &function.export_name {
-					Some(name) => write!(f, "{}", name),
-					None => write!(f, "None")
+					Some(name) => name.clone(),
+					None => format!("{}", function.index),
 				}
 			},
-			Callable::RustFunction { name, .. } => write!(f, "{}", name),
-			Callable::RustClosure { name, .. } => write!(f, "{}", name),
+			Callable::RustFunction { name, .. } => name.to_string(),
+			Callable::RustClosure { name, .. } => name.to_string(),
 		}
+	}
+}
+
+impl fmt::Display for Callable {
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		write!(f, "{}", self.name())
 	}
 }
 

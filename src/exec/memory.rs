@@ -1,5 +1,6 @@
-use std::{fmt, mem};
+use std::{fmt, usize};
 use std::ops::Range;
+use tracing::debug;
 use crate::parse::MemoryBlueprint;
 
 
@@ -42,12 +43,20 @@ impl fmt::Debug for Memory {
 	}
 }
 
+pub trait MemObject {
+	/// Creates a [MemObject] from an address in [Memory].
+	fn read_from_mem(mem: &Memory, addr: usize) -> Self;
+
+	/// Writes a [MemObject] to an address in [Memory].
+	fn write_to_mem(&self, mem: &mut Memory, addr: usize);
+}
+
 impl Memory {
 	pub(crate) fn grow(&mut self, new_page_size: usize) {
 		assert!(new_page_size >= self.page_limit.start, "Memory grow too small");
 		assert!(new_page_size <= self.page_limit.end, "Memory grow too large");
 
-		log::debug!("Memory grow to {} pages", new_page_size);
+		debug!("Memory grow to {} pages", new_page_size);
 		let new_byte_size = MEMORY_PAGE_SIZE * new_page_size;
 		self.data.resize(new_byte_size, 0);
 	}
@@ -60,10 +69,25 @@ impl Memory {
 		&self.data
 	}
 
-	/*pub fn get<T: Value>(&self, addr: usize) -> T {
-		let size = mem::size_of::<T>();
-		let buf = &self.data[addr..addr+size];
-		let t_ptr = buf.as_ptr();
-		unsafe { mem::transmute(t_ptr) }
-	}*/
+	pub fn read<T: MemObject>(&self, addr: usize) -> T {
+		T::read_from_mem(&self, addr)
+	}
+
+	pub fn write<T: MemObject>(&mut self, mem_object: &T, addr: usize) {
+		mem_object.write_to_mem(self, addr)
+	}
+}
+
+impl MemObject for u32 {
+	fn read_from_mem(mem: &Memory, addr: usize) -> Self {
+		const BYTE_WIDTH: usize = (u32::BITS / 8) as usize;
+		let mut buf = [0u8; BYTE_WIDTH];
+		buf.copy_from_slice(&mem.data[addr..addr+ BYTE_WIDTH]);
+		Self::from_le_bytes(buf)
+	}
+
+	fn write_to_mem(&self, mem: &mut Memory, addr: usize) {
+		const BYTE_WIDTH: usize = (u32::BITS / 8) as usize;
+		mem.data[addr..addr+BYTE_WIDTH].copy_from_slice(&self.to_le_bytes());
+	}
 }

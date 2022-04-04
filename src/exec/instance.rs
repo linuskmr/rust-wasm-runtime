@@ -1,5 +1,6 @@
-use std::{io, mem};
-use std::io::{Read, Write};
+
+
+use tracing::{debug_span, error, trace};
 use crate::exec::memory::Memory;
 use crate::exec::{Callable, Instruction, Value, ExecutionResult, wasi};
 use crate::exec::error::ExecutionError;
@@ -36,7 +37,7 @@ impl Instance {
 		let mut functions: Vec<Callable> = vec![
 			Callable::RustFunction {
 				name: ("wasi_snapshot_preview1", "fd_write").into(),
-				function: wasi::fd_write
+				function: wasi::fd_write_
 			}
 		];
 		functions.extend(
@@ -105,7 +106,10 @@ impl<'a> InstanceRef<'a> {
 				len: self.functions.len()
 			})?;
 		self.call_stack.push(function_index);
-		log::debug!("callstack {:?}", self.call_stack().iter().map(|f| f.to_string()).collect::<Vec<_>>());
+		let _log_span = debug_span!("function", function_index, name = %function).entered();
+
+		trace!("callstack {:?}", self.call_stack().iter().map(|f| f.to_string()).collect::<Vec<_>>());
+
 		match function {
 			Callable::RustFunction { function, .. } => function(self)?,
 			Callable::RustClosure { closure, .. } => closure(self)?,
@@ -120,24 +124,24 @@ impl<'a> InstanceRef<'a> {
 	}
 
 	fn exec_instruction(&mut self, instruction: &Instruction) -> ExecutionResult {
-		log::trace!("executing instruction {:?}", instruction);
+		trace!("executing Instruction::{:?}", instruction);
 		match instruction {
 			Instruction::I32Const(val) => self.operand_stack.push(Value::I32(*val)),
 			Instruction::I32Store(mem_arg) => {
 				let val = i32::try_from(self.operand_stack.pop().unwrap()).unwrap().to_le_bytes();
 				let addr = i32::try_from(self.operand_stack.pop().unwrap()).unwrap();
 				let addr = addr as usize + mem_arg.offset;
-				log::trace!("mem[{}] = {:?}", addr, val);
+				trace!("mem[{}] = {:?}", addr, val);
 				let mem = self.memory.as_mut().ok_or(ExecutionError::NoMemory)?;
 				let mem_size = mem.data.len();
 				let mem_slice = mem.data.get_mut(addr..addr+4).ok_or(ExecutionError::InvalidMemoryArea{ addr, size: mem_size })?;
 				mem_slice.copy_from_slice(&val);
 			},
-			Instruction::Call { function_index } => self.exec_function(*function_index)?,
-			Instruction::Drop => {
-				self.operand_stack.pop().ok_or(ExecutionError::PopOnEmptyOperandStack)?;
+			Instruction::Call { function_index } => {
+				self.exec_function(*function_index)?;
 			},
- 			_ => log::error!("unimplemented executing instruction {:?}", instruction),
+			Instruction::Drop => { self.operand_stack.pop().ok_or(ExecutionError::PopOnEmptyOperandStack)?; },
+ 			_ => error!("unimplemented executing Instruction::{:?}", instruction),
 		}
 		Ok(())
 	}
@@ -151,7 +155,7 @@ impl<'a> InstanceRef<'a> {
 	fn op_stack_pop_i32(&mut self) -> Result<i32, ExecutionError> {
 		match i32::try_from(self.operand_stack.pop().unwrap()) {
 			Ok(i) => Ok(i),
-			Err(err) => Err(ExecutionError::PopOnEmptyOperandStack)
+			Err(_) => Err(ExecutionError::PopOnEmptyOperandStack)
 		}
 	}
 
