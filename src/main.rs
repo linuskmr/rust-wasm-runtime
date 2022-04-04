@@ -17,11 +17,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut instance = Instance::new(module);
     instance.start()?;
-    println!("Operand stack {:#?}", instance.operand_stack());
+    log::info!("Operand stack {:#?}", instance.operand_stack());
     if let Some(mem) = instance.memory() {
-        println!("Memory {:?}", &mem.data()[0..50]);
+        log::info!("Memory {:?}", &mem.data()[0..50]);
     } else {
-        println!("no memory");
+        log::info!("no memory");
     }
 
 

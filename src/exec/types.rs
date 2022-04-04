@@ -1,7 +1,11 @@
 use std::fmt;
 use std::fmt::Formatter;
 use std::rc::Rc;
+use crate::exec::error::ExecutionError;
+use crate::exec::instance::InstanceRef;
 use crate::parse::{ParsingError, Type};
+
+pub(crate) type ExecutionResult = Result<(), ExecutionError>;
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Instruction {
@@ -229,6 +233,17 @@ impl TryFrom<Value> for i32 {
 	}
 }
 
+impl TryFrom<Value> for u32 {
+	type Error = ();
+
+	fn try_from(value: Value) -> Result<Self, Self::Error> {
+		match value {
+			Value::I32(val) => Ok(val as u32),
+			_ => Err(()),
+		}
+	}
+}
+
 #[derive(Eq, PartialEq, Debug, Default, Clone)]
 pub struct FunctionSignature {
 	pub params: Vec<Type>,
@@ -281,11 +296,11 @@ pub enum Callable {
 	WasmFunction(WasmFunction),
 	RustClosure {
 		name: Identifier,
-		closure: Box<dyn Fn()>
+		closure: Box<dyn Fn(&mut InstanceRef) -> ExecutionResult>
 	},
 	RustFunction {
 		name: Identifier,
-		function: fn()
+		function: fn(&mut InstanceRef) -> ExecutionResult
 	},
 }
 

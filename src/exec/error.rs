@@ -1,3 +1,4 @@
+use std::io;
 use thiserror::Error;
 
 
@@ -11,4 +12,16 @@ pub enum ExecutionError {
 		addr: usize,
 		size: usize,
 	},
+
+	#[error("Function index {index} out of bounds for length {len}")]
+	FunctionIndexOutOfBounds {
+		index: usize,
+		len: usize,
+	},
+
+	#[error("Pop was called on an empty operand stack")]
+	PopOnEmptyOperandStack,
+
+	#[error("IoError: {0}")]
+	IoError(#[from] io::Error),
 }

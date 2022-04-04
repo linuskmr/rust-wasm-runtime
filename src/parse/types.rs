@@ -1,7 +1,7 @@
 use std::io;
 use std::ops::Range;
 use num_enum::TryFromPrimitive;
-use crate::exec::Functions;
+use crate::exec::{Functions, Instruction};
 use crate::parse::{Parser, ParsingError};
 
 /// <https://webassembly.github.io/spec/core/binary/modules.html#sections>
@@ -260,6 +260,13 @@ pub struct MemoryBlueprint {
 	/// Minimum and maximum page limit.
 	pub(crate) page_limit: Range<usize>,
 	pub(crate) export_name: Option<String>,
+	pub(crate) init: Vec<DataSegment>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct DataSegment {
+	pub(crate) addr: usize,
+	pub(crate) data: Vec<u8>,
 }
 
 /// A parsed WebAssembly module.

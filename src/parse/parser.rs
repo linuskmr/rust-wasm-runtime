@@ -344,6 +344,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 				Opcode::I64Extend8S => Instruction::I64Extend8S,
 				Opcode::I64Extend16S => Instruction::I64Extend16S,
 				Opcode::I64Extend32S => Instruction::I64Extend32S,
+				Opcode::Drop => Instruction::Drop,
 				other => {
 					log::error!("Unimplemented opcode {:?}", other);
 					continue
@@ -429,7 +430,7 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 					min..max
 				}
 			};
-			let memory_blueprint = MemoryBlueprint { page_limit, export_name: None };
+			let memory_blueprint = MemoryBlueprint { page_limit, export_name: None, init: Vec::new() };
 			log::trace!("{:?}", memory_blueprint);
 			self.module.memory_blueprint = Some(memory_blueprint);
 		}
@@ -444,11 +445,23 @@ impl<ByteIter: io::Read> Parser<ByteIter> {
 			let data_mode = DataMode::try_from(self.read_byte()?)?;
 			match data_mode {
 				DataMode::ActiveMemory0 => {
-					let expression = self.parse_instructions()?;
+					let segment_addr_expressions = self.parse_instructions()?;
+					let segment_addr = match segment_addr_expressions[0] {
+						Instruction::I32Const(val) => val as usize,
+						_ => unimplemented!("Unsupported data segment address expression"),
+					};
+
 					let segment_size = leb128::read::unsigned(&mut self.bytecode)? as usize;
+
 					let mut segment_data = vec![0u8; segment_size];
 					self.bytecode.read_exact(&mut segment_data)?;
-					log::debug!("Expression:{:?} Segment data:{:?}", expression, String::from_utf8(segment_data));
+
+					let data_segment = DataSegment {
+						addr: segment_addr,
+						data: segment_data,
+					};
+					log::debug!("{:?}", data_segment);
+					self.module.memory_blueprint.as_mut().unwrap().init.push(data_segment);
 				},
 				DataMode::Passive => unimplemented!(),
 				DataMode::Active => unimplemented!(),

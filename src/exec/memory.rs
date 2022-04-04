@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, mem};
 use std::ops::Range;
 use crate::parse::MemoryBlueprint;
 
@@ -20,7 +20,14 @@ impl From<MemoryBlueprint> for Memory {
 			page_limit: blueprint.page_limit.clone(),
 			name: blueprint.export_name
 		};
+		// Set initial page size
 		memory.grow(blueprint.page_limit.start);
+
+		// Copy init data from data section into memory
+		for init_segment in blueprint.init {
+			let memory_slice_addr = (init_segment.addr, init_segment.addr + init_segment.data.len());
+			memory.data[memory_slice_addr.0..memory_slice_addr.1].copy_from_slice(&init_segment.data);
+		}
 		memory
 	}
 }
@@ -52,4 +59,11 @@ impl Memory {
 	pub fn data(&self) -> &[u8] {
 		&self.data
 	}
+
+	/*pub fn get<T: Value>(&self, addr: usize) -> T {
+		let size = mem::size_of::<T>();
+		let buf = &self.data[addr..addr+size];
+		let t_ptr = buf.as_ptr();
+		unsafe { mem::transmute(t_ptr) }
+	}*/
 }
