@@ -224,26 +224,75 @@ pub enum Value {
 }
 
 impl TryFrom<Value> for i32 {
-	type Error = ();
+	type Error = ExecutionError;
 
 	fn try_from(value: Value) -> Result<Self, Self::Error> {
 		match value {
 			Value::I32(val) => Ok(val),
-			_ => Err(()),
+			got => Err(ExecutionError::StackTypeError {
+				got,
+				expected: "i32",
+			}),
 		}
 	}
 }
 
 impl TryFrom<Value> for u32 {
-	type Error = ();
+	type Error = ExecutionError;
 
 	fn try_from(value: Value) -> Result<Self, Self::Error> {
 		match value {
 			Value::I32(val) => Ok(val as u32),
-			_ => Err(()),
+			got => Err(ExecutionError::StackTypeError {
+				got,
+				expected: "i32(u32)",
+			}),
 		}
 	}
 }
+
+impl TryFrom<Value> for i64 {
+	type Error = ExecutionError;
+
+	fn try_from(value: Value) -> Result<Self, Self::Error> {
+		match value {
+			Value::I64(val) => Ok(val),
+			got => Err(ExecutionError::StackTypeError {
+				got,
+				expected: "i64",
+			}),
+		}
+	}
+}
+
+impl TryFrom<Value> for u64 {
+	type Error = ExecutionError;
+
+	fn try_from(value: Value) -> Result<Self, Self::Error> {
+		match value {
+			Value::I64(val) => Ok(val as u64),
+			got => Err(ExecutionError::StackTypeError {
+				got,
+				expected: "i64(u64)",
+			}),
+		}
+	}
+}
+
+impl TryFrom<Value> for usize {
+	type Error = ExecutionError;
+
+	fn try_from(value: Value) -> Result<Self, Self::Error> {
+		match value {
+			Value::I64(val) => Ok(val as usize),
+			got => Err(ExecutionError::StackTypeError {
+				got,
+				expected: "usize",
+			}),
+		}
+	}
+}
+
 
 #[derive(Eq, PartialEq, Debug, Default, Clone)]
 pub struct FunctionSignature {

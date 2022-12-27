@@ -1,6 +1,5 @@
 use std::{fmt, usize};
 use std::ops::Range;
-use tracing::debug;
 use crate::parse::MemoryBlueprint;
 
 
@@ -56,7 +55,7 @@ impl Memory {
 		assert!(new_page_size >= self.page_limit.start, "Memory grow too small");
 		assert!(new_page_size <= self.page_limit.end, "Memory grow too large");
 
-		debug!("Memory grow to {} pages", new_page_size);
+		log::debug!("Memory grow to {} pages", new_page_size);
 		let new_byte_size = MEMORY_PAGE_SIZE * new_page_size;
 		self.data.resize(new_byte_size, 0);
 	}

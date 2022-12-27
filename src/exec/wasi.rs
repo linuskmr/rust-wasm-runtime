@@ -1,18 +1,15 @@
 use std::{io};
 
 use std::io::{IoSlice, Write};
-use tracing::{debug_span};
 use crate::exec::{ExecutionResult, Value};
 use crate::exec::instance::InstanceRef;
 
 
-pub(crate) fn fd_write_(instance: &mut InstanceRef) -> ExecutionResult {
-	let result_ptr = instance.op_stack_pop_u32()? as usize;
-	let iovec_array_len = instance.op_stack_pop_u32()? as usize;
-	let iovec_array_ptr = instance.op_stack_pop_u32()? as usize;
-	let fd = instance.op_stack_pop_u32()?;
-
-	let _log_span = debug_span!("fd_write", fd, iovec_array_ptr, iovec_array_len, result_ptr).entered();
+pub(crate) fn fd_write(instance: &mut InstanceRef) -> ExecutionResult {
+	let result_ptr = instance.op_stack_pop()?.try_into()?;
+	let iovec_array_len = instance.op_stack_pop()?.try_into()?;
+	let iovec_array_ptr = instance.op_stack_pop()?.try_into()?;
+	let fd: i32 = instance.op_stack_pop()?.try_into()?;
 
 	let mem = instance.memory.as_mut().unwrap();
 

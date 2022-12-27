@@ -1,5 +1,7 @@
 use std::io;
 use thiserror::Error;
+use crate::exec::Value;
+use crate::parse::Type;
 
 
 #[derive(Debug, Error)]
@@ -21,6 +23,15 @@ pub enum ExecutionError {
 
 	#[error("Pop was called on an empty operand stack")]
 	PopOnEmptyOperandStack,
+	
+	#[error("Expected {expected} on stack, got {got:?} instead")]
+	StackTypeError {
+		expected: &'static str,
+		got: Value,
+	},
+	
+	#[error("Trap because of {0}")]
+	Trap(&'static str),
 
 	#[error("IoError: {0}")]
 	IoError(#[from] io::Error),

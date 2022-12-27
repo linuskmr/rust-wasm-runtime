@@ -1,6 +1,4 @@
-
-
-use tracing::{debug_span, error, trace};
+use std::ops::{BitAnd, BitOr, BitXor, Shl, Shr};
 use crate::exec::memory::Memory;
 use crate::exec::{Callable, Instruction, Value, ExecutionResult, wasi};
 use crate::exec::error::ExecutionError;
@@ -37,7 +35,7 @@ impl Instance {
 		let mut functions: Vec<Callable> = vec![
 			Callable::RustFunction {
 				name: ("wasi_snapshot_preview1", "fd_write").into(),
-				function: wasi::fd_write_
+				function: wasi::fd_write
 			}
 		];
 		functions.extend(
@@ -45,7 +43,7 @@ impl Instance {
 				.map(|wasm_func| Callable::WasmFunction(wasm_func))
 		);
 
-		let memories = module.memory_blueprint.map(|mem_blueprint| Memory::from(mem_blueprint));
+		let memories = module.memory_blueprint.map(Memory::from);
 
 
 		Self { functions, memory: memories, operand_stack: Vec::new(), call_stack: Vec::new() }
@@ -105,43 +103,223 @@ impl<'a> InstanceRef<'a> {
 				index: function_index,
 				len: self.functions.len()
 			})?;
+
 		self.call_stack.push(function_index);
-		let _log_span = debug_span!("function", function_index, name = %function).entered();
+		log::trace!("callstack {:?}", self.call_stack().iter().map(|f| f.to_string()).collect::<Vec<_>>());
 
-		trace!("callstack {:?}", self.call_stack().iter().map(|f| f.to_string()).collect::<Vec<_>>());
-
+		// Execute function body
 		match function {
 			Callable::RustFunction { function, .. } => function(self)?,
 			Callable::RustClosure { closure, .. } => closure(self)?,
 			Callable::WasmFunction(function) => {
-				for instruction in &function.body {
-					self.exec_instruction(instruction)?;
-				}
+				self.exec_instructions(&function.body)?;
 			},
 		}
+
 		self.call_stack.pop();
 		Ok(())
 	}
 
-	fn exec_instruction(&mut self, instruction: &Instruction) -> ExecutionResult {
-		trace!("executing Instruction::{:?}", instruction);
-		match instruction {
-			Instruction::I32Const(val) => self.operand_stack.push(Value::I32(*val)),
-			Instruction::I32Store(mem_arg) => {
-				let val = i32::try_from(self.operand_stack.pop().unwrap()).unwrap().to_le_bytes();
-				let addr = i32::try_from(self.operand_stack.pop().unwrap()).unwrap();
-				let addr = addr as usize + mem_arg.offset;
-				trace!("mem[{}] = {:?}", addr, val);
-				let mem = self.memory.as_mut().ok_or(ExecutionError::NoMemory)?;
-				let mem_size = mem.data.len();
-				let mem_slice = mem.data.get_mut(addr..addr+4).ok_or(ExecutionError::InvalidMemoryArea{ addr, size: mem_size })?;
-				mem_slice.copy_from_slice(&val);
-			},
-			Instruction::Call { function_index } => {
-				self.exec_function(*function_index)?;
-			},
-			Instruction::Drop => { self.operand_stack.pop().ok_or(ExecutionError::PopOnEmptyOperandStack)?; },
- 			_ => error!("unimplemented executing Instruction::{:?}", instruction),
+	fn exec_instructions<'iter>(&mut self, instructions: impl IntoIterator<Item=&'iter Instruction>) -> ExecutionResult {
+		for instruction in instructions {
+			log::trace!("executing Instruction::{:?}", instruction);
+			match instruction {
+				Instruction::Unreachable => return Err(ExecutionError::Trap("Instruction::Unreachable")),
+				Instruction::Nop => (),
+				Instruction::Block { block_type, instructions } => {
+					self.exec_instructions(instructions)?;
+				},
+				Instruction::Loop { block_type, instructions } => {
+					self.exec_instructions(instructions)?;
+				},
+				Instruction::If { block_type, if_instructions, else_instructions } => {
+					let condition = i32::try_from(self.op_stack_pop()?)?;
+					if condition != 0 {
+						self.exec_instructions(if_instructions);
+					} else {
+						self.exec_instructions(else_instructions);
+					}
+				},
+				Instruction::Return => break,
+				Instruction::I32Const(val) => self.operand_stack.push(Value::I32(*val)),
+				Instruction::I32Store(mem_arg) => {
+					let val = i32::try_from(self.op_stack_pop()?)?.to_le_bytes();
+					let addr = i32::try_from(self.op_stack_pop()?)?;
+					let addr = addr as usize + mem_arg.offset;
+					log::trace!("mem[{}] <- {:?}", addr, val);
+					let mem = self.memory.as_mut().ok_or(ExecutionError::NoMemory)?;
+					let mem_size = mem.data.len();
+					let mem_slice = mem.data.get_mut(addr..addr + 4).ok_or(ExecutionError::InvalidMemoryArea { addr, size: mem_size })?;
+					mem_slice.copy_from_slice(&val);
+				},
+				Instruction::Call { function_index } => self.exec_function(*function_index)?,
+				Instruction::Drop => { self.operand_stack.pop().ok_or(ExecutionError::PopOnEmptyOperandStack)?; },
+				Instruction::I32Eqz => {
+					let a = i32::try_from(self.op_stack_pop()?)?;
+					let result = if a == 0 { 1 } else { 0 };
+					self.operand_stack.push(Value::I32(result));
+				}
+				Instruction::I32Eq => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = if lhs == rhs { 1 } else  { 0 };
+					self.operand_stack.push(Value::I32(result));
+				},
+				Instruction::I32Add => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = i32::wrapping_add(lhs, rhs);
+					self.operand_stack.push(Value::I32(result));
+				},
+				Instruction::I32Add => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = i32::wrapping_sub(lhs, rhs);
+					self.operand_stack.push(Value::I32(result));
+				},
+				Instruction::I32Mul => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = i32::wrapping_mul(lhs, rhs);
+					self.operand_stack.push(Value::I32(result));
+				},
+				Instruction::I32DivU => {
+					let lhs = u32::try_from(self.op_stack_pop()?)?;
+					let rhs = u32::try_from(self.op_stack_pop()?)?;
+					let result = u32::wrapping_div(lhs, rhs);
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				Instruction::I32DivS => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = i32::wrapping_div(lhs, rhs);
+					self.operand_stack.push(Value::I32(result));
+				},
+				Instruction::I32RemU => {
+					let lhs = u32::try_from(self.op_stack_pop()?)?;
+					let rhs = u32::try_from(self.op_stack_pop()?)?;
+					let result = u32::wrapping_rem(lhs, rhs);
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				Instruction::I32RemS => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = i32::wrapping_rem(lhs, rhs);
+					self.operand_stack.push(Value::I32(result));
+				},
+				Instruction::I32And => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = i32::bitand(lhs, rhs);
+					self.operand_stack.push(Value::I32(result));
+				},
+				Instruction::I32Or => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = i32::bitor(lhs, rhs);
+					self.operand_stack.push(Value::I32(result));
+				},
+				Instruction::I32Xor => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = i32::bitxor(lhs, rhs);
+					self.operand_stack.push(Value::I32(result));
+				},
+				Instruction::I32Shl => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = i32::shl(lhs, rhs);
+					self.operand_stack.push(Value::I32(result));
+				},
+				Instruction::I32ShrU => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = i32::shr(lhs, rhs); // TODO: Possibly not correct sign extension?
+					self.operand_stack.push(Value::I32(result));
+				},
+				Instruction::I32ShrS => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = i32::shr(lhs, rhs); // TODO: Possibly not correct sign extension?
+					self.operand_stack.push(Value::I32(result));
+				},
+				Instruction::I32Rotr => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = i32::rotate_right(lhs, rhs as u32);
+					self.operand_stack.push(Value::I32(result));
+				},
+				Instruction::I32Clz => {
+					let operand = i32::try_from(self.op_stack_pop()?)?;
+					let result = operand.leading_zeros();
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				Instruction::I32Ctz => {
+					let operand = i32::try_from(self.op_stack_pop()?)?;
+					let result = operand.trailing_zeros();
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				Instruction::I32Popcnt => {
+					let operand = i32::try_from(self.op_stack_pop()?)?;
+					let result = operand.count_ones();
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				Instruction::I32Ne => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = if lhs != rhs { 1 } else { 0 };
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				Instruction::I32LtU => {
+					let lhs = u32::try_from(self.op_stack_pop()?)?;
+					let rhs = u32::try_from(self.op_stack_pop()?)?;
+					let result = if lhs < rhs { 1 } else { 0 };
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				Instruction::I32LtS => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = if lhs < rhs { 1 } else { 0 };
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				Instruction::I32GtU => {
+					let lhs = u32::try_from(self.op_stack_pop()?)?;
+					let rhs = u32::try_from(self.op_stack_pop()?)?;
+					let result = if lhs > rhs { 1 } else { 0 };
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				Instruction::I32GtS => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = if lhs > rhs { 1 } else { 0 };
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				Instruction::I32LeU => {
+					let lhs = u32::try_from(self.op_stack_pop()?)?;
+					let rhs = u32::try_from(self.op_stack_pop()?)?;
+					let result = if lhs <= rhs { 1 } else { 0 };
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				Instruction::I32GtS => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = if lhs <= rhs { 1 } else { 0 };
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				Instruction::I32GeS => {
+					let lhs = u32::try_from(self.op_stack_pop()?)?;
+					let rhs = u32::try_from(self.op_stack_pop()?)?;
+					let result = if lhs >= rhs { 1 } else { 0 };
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				Instruction::I32GeU => {
+					let lhs = i32::try_from(self.op_stack_pop()?)?;
+					let rhs = i32::try_from(self.op_stack_pop()?)?;
+					let result = if lhs >= rhs { 1 } else { 0 };
+					self.operand_stack.push(Value::I32(result as i32));
+				},
+				_ => log::error!("unimplemented executing Instruction::{:?}", instruction),
+			}
 		}
 		Ok(())
 	}
@@ -152,17 +330,7 @@ impl<'a> InstanceRef<'a> {
 			.collect()
 	}
 
-	fn op_stack_pop_i32(&mut self) -> Result<i32, ExecutionError> {
-		match i32::try_from(self.operand_stack.pop().unwrap()) {
-			Ok(i) => Ok(i),
-			Err(_) => Err(ExecutionError::PopOnEmptyOperandStack)
-		}
-	}
-
-	pub(crate) fn op_stack_pop_u32(&mut self) -> Result<u32, ExecutionError> {
-		match u32::try_from(self.operand_stack.pop().unwrap()) {
-			Ok(i) => Ok(i),
-			Err(_) => Err(ExecutionError::PopOnEmptyOperandStack)
-		}
+	pub fn op_stack_pop(&mut self) -> Result<Value, ExecutionError> {
+		self.operand_stack.pop().ok_or(ExecutionError::PopOnEmptyOperandStack)
 	}
 }

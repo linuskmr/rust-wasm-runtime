@@ -4,7 +4,7 @@ use rust_wasm_runtime::{
 };
 use std::error::Error;
 use std::fs;
-use tracing::{info, Level};
+
 
 fn main() -> Result<(), Box<dyn Error>> {
     init();
@@ -19,9 +19,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut instance = Instance::new(module);
     instance.start()?;
     if let Some(mem) = instance.memory() {
-        info!("Memory {:?}", &mem.data()[0..50]);
+        log::info!("Memory {:?}", &mem.data()[0..50]);
     } else {
-        info!("no memory");
+        log::info!("no memory");
     }
 
 
@@ -29,14 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn init() {
-    use tracing_subscriber::fmt::format::FmtSpan;
-
-    tracing_subscriber::fmt::fmt()
-        .with_file(true)
-        .with_line_number(true)
-        .with_max_level(Level::TRACE)
-        .with_target(false)
-        .without_time()
-        .with_span_events(FmtSpan::ENTER)
+    env_logger::builder()
+        .format_timestamp(None)
         .init();
 }
