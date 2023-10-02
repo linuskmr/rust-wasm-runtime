@@ -5,22 +5,26 @@ use crate::exec::{ExecutionResult, Value};
 use crate::exec::instance::InstanceRef;
 
 
-pub(crate) fn fd_write(instance: &mut InstanceRef) -> ExecutionResult {
-	let result_ptr = instance.op_stack_pop()?.try_into()?;
-	let iovec_array_len = instance.op_stack_pop()?.try_into()?;
-	let iovec_array_ptr = instance.op_stack_pop()?.try_into()?;
-	let fd: i32 = instance.op_stack_pop()?.try_into()?;
+pub fn fd_write(instance: &mut InstanceRef) -> ExecutionResult {
+	let result_ptr = i32::try_from(instance.op_stack_pop()?)? as usize;
+	let iovec_array_len = i32::try_from(instance.op_stack_pop()?)? as usize;
+	let iovec_array_ptr = i32::try_from(instance.op_stack_pop()?)? as usize;
+	let fd = i32::try_from(instance.op_stack_pop()?)?;
 
 	let mem = instance.memory.as_mut().unwrap();
 
 	let mut io_slices: Vec<IoSlice> = Vec::new();
 
-	let mut iovec_ptr = iovec_array_ptr;
-	for _ in 0..iovec_array_len {
+	let iovec_ptrs = {
+		const IOVEC_SIZE: usize = 8;
+		let start = iovec_array_ptr;
+		let end = iovec_array_ptr + (iovec_array_len * IOVEC_SIZE);
+		(start..end).step_by(IOVEC_SIZE)
+	};
+
+	for iovec_ptr in iovec_ptrs {
 		let iovec_addr = mem.read::<u32>(iovec_ptr) as usize;
-		iovec_ptr += 4;
-		let iovec_len = mem.read::<u32>(iovec_ptr) as usize;
-		iovec_ptr += 4;
+		let iovec_len = mem.read::<u32>(iovec_ptr + 4) as usize;
 		let iovec_buf = &mem.data[iovec_addr..iovec_addr+iovec_len];
 		io_slices.push(IoSlice::new(iovec_buf));
 	}
