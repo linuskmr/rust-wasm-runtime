@@ -74,8 +74,8 @@ impl Instance {
 #[derive(Debug)]
 pub struct InstanceRef<'a> {
 	functions: &'a Vec<Callable>,
-	pub(crate) memory: &'a mut Option<Memory>,
-	pub(crate) operand_stack: &'a mut Vec<Value>,
+	pub memory: &'a mut Option<Memory>,
+	pub operand_stack: &'a mut Vec<Value>,
 	call_stack: &'a mut Vec<usize>,
 }
 
@@ -97,6 +97,7 @@ impl<'a> InstanceRef<'a> {
 		self.exec_function(index)
 	}
 
+	#[tracing::instrument(skip(self))]
 	fn exec_function(&mut self, function_index: usize) -> ExecutionResult {
 		let function = self.functions.get(function_index)
 			.ok_or(ExecutionError::FunctionIndexOutOfBounds {
@@ -105,14 +106,14 @@ impl<'a> InstanceRef<'a> {
 			})?;
 
 		self.call_stack.push(function_index);
-		log::trace!("callstack {:?}", self.call_stack().iter().map(|f| f.to_string()).collect::<Vec<_>>());
+		tracing::trace!(callstack = ?self.call_stack().iter().map(|f| f.to_string()).collect::<Vec<_>>());
 
 		// Execute function body
 		match function {
 			Callable::RustFunction { function, .. } => function(self)?,
 			Callable::RustClosure { closure, .. } => closure(self)?,
 			Callable::WasmFunction(function) => {
-				self.exec_instructions(&function.body)?;
+				self.execute_instructions(&function.body)?;
 			},
 		}
 
@@ -120,36 +121,44 @@ impl<'a> InstanceRef<'a> {
 		Ok(())
 	}
 
-	fn exec_instructions<'iter>(&mut self, instructions: impl IntoIterator<Item=&'iter Instruction>) -> ExecutionResult {
+	fn execute_instructions<'iter>(&mut self, instructions: impl IntoIterator<Item=&'iter Instruction>) -> ExecutionResult {
 		for instruction in instructions {
-			log::trace!("executing Instruction::{:?}", instruction);
+			let span = tracing::trace_span!("execute_instruction", ?instruction);
+			let _span_enter = span.enter();
 			match instruction {
 				Instruction::Unreachable => return Err(ExecutionError::Trap("Instruction::Unreachable")),
 				Instruction::Nop => (),
 				Instruction::Block { block_type, instructions } => {
-					self.exec_instructions(instructions)?;
+					self.execute_instructions(instructions)?;
 				},
 				Instruction::Loop { block_type, instructions } => {
-					self.exec_instructions(instructions)?;
+					self.execute_instructions(instructions)?;
 				},
 				Instruction::If { block_type, if_instructions, else_instructions } => {
 					let condition = i32::try_from(self.op_stack_pop()?)?;
 					if condition != 0 {
-						self.exec_instructions(if_instructions);
+						self.execute_instructions(if_instructions)?;
 					} else {
-						self.exec_instructions(else_instructions);
+						self.execute_instructions(else_instructions)?;
 					}
 				},
 				Instruction::Return => break,
 				Instruction::I32Const(val) => self.operand_stack.push(Value::I32(*val)),
 				Instruction::I32Store(mem_arg) => {
-					let val = i32::try_from(self.op_stack_pop()?)?.to_le_bytes();
+					let val = i32::try_from(self.op_stack_pop()?)?;
+					// Convert value to little endian, because memory is in little endian
+					let val = val.to_le_bytes();
+
 					let addr = i32::try_from(self.op_stack_pop()?)?;
 					let addr = addr as usize + mem_arg.offset;
-					log::trace!("mem[{}] <- {:?}", addr, val);
-					let mem = self.memory.as_mut().ok_or(ExecutionError::NoMemory)?;
-					let mem_size = mem.data.len();
-					let mem_slice = mem.data.get_mut(addr..addr + 4).ok_or(ExecutionError::InvalidMemoryArea { addr, size: mem_size })?;
+					let addr = addr..addr+4;
+
+					tracing::trace!("mem[{:?}] <- {:?}", addr, val);
+					let mem = self.memory.as_mut()
+						.ok_or(ExecutionError::NoMemory)?;
+					let mem_data_len = mem.data.len(); // Has to fetched in advance for borrow checker
+					let mem_slice = mem.data.get_mut(addr.clone())
+						.ok_or(ExecutionError::InvalidMemoryArea { addr, size: mem_data_len })?;
 					mem_slice.copy_from_slice(&val);
 				},
 				Instruction::Call { function_index } => self.exec_function(*function_index)?,
@@ -318,7 +327,7 @@ impl<'a> InstanceRef<'a> {
 					let result = if lhs >= rhs { 1 } else { 0 };
 					self.operand_stack.push(Value::I32(result as i32));
 				},
-				_ => log::error!("unimplemented executing Instruction::{:?}", instruction),
+				_ => tracing::error!("unimplemented executing Instruction::{:?}", instruction),
 			}
 		}
 		Ok(())

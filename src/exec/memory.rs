@@ -51,11 +51,11 @@ pub trait MemObject {
 }
 
 impl Memory {
-	pub(crate) fn grow(&mut self, new_page_size: usize) {
+	#[tracing::instrument(skip(self))]
+	pub fn grow(&mut self, new_page_size: usize) {
 		assert!(new_page_size >= self.page_limit.start, "Memory grow too small");
 		assert!(new_page_size <= self.page_limit.end, "Memory grow too large");
 
-		log::debug!("Memory grow to {} pages", new_page_size);
 		let new_byte_size = MEMORY_PAGE_SIZE * new_page_size;
 		self.data.resize(new_byte_size, 0);
 	}

@@ -1,4 +1,5 @@
 use std::io;
+use std::ops::Range;
 use thiserror::Error;
 use crate::exec::Value;
 use crate::parse::Type;
@@ -9,9 +10,9 @@ pub enum ExecutionError {
 	#[error("A memory instruction was called, but no memory is assigned to the module")]
 	NoMemory,
 
-	#[error("Accessed address {addr} of memory with size {size}")]
+	#[error("Accessed address {addr:?} of memory with size {size}")]
 	InvalidMemoryArea {
-		addr: usize,
+		addr: Range<usize>,
 		size: usize,
 	},
 

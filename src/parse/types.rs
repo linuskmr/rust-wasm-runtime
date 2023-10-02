@@ -258,22 +258,22 @@ pub enum DataMode {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct MemoryBlueprint {
 	/// Minimum and maximum page limit.
-	pub(crate) page_limit: Range<usize>,
-	pub(crate) export_name: Option<String>,
-	pub(crate) init: Vec<DataSegment>,
+	pub page_limit: Range<usize>,
+	pub export_name: Option<String>,
+	pub init: Vec<DataSegment>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct DataSegment {
-	pub(crate) addr: usize,
-	pub(crate) data: Vec<u8>,
+	pub addr: usize,
+	pub data: Vec<u8>,
 }
 
 /// A parsed WebAssembly module.
 #[derive(Default, Debug)]
 pub struct Module {
-	pub(crate) functions: Functions,
-	pub(crate) memory_blueprint: Option<MemoryBlueprint>,
+	pub functions: Functions,
+	pub memory_blueprint: Option<MemoryBlueprint>,
 }
 
 impl Module {

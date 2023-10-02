@@ -302,8 +302,8 @@ pub struct FunctionSignature {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Identifier {
-	pub(crate) module: String,
-	pub(crate) field: String,
+	pub module: String,
+	pub field: String,
 }
 
 impl From<(&'static str, &'static str)> for Identifier {
@@ -336,8 +336,8 @@ pub struct WasmFunction {
 
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct MemArg {
-	pub(crate) align: usize,
-	pub(crate) offset: usize,
+	pub align: usize,
+	pub offset: usize,
 }
 
 /// Something that can be called inside the context of a runtime. This is either a WebAssembly function or a
@@ -402,18 +402,18 @@ impl fmt::Display for Callable {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ExternFunction {
-	pub(crate) name: Identifier,
-	pub(crate) signature: Rc<FunctionSignature>,
+	pub name: Identifier,
+	pub signature: Rc<FunctionSignature>,
 }
 
 #[derive(Default, Debug, PartialEq)]
 pub struct Functions {
-	pub(crate) imports: Vec<ExternFunction>,
-	pub(crate) wasm: Vec<WasmFunction>,
+	pub imports: Vec<ExternFunction>,
+	pub wasm: Vec<WasmFunction>,
 }
 
 impl Functions {
-	pub(crate) fn get_wasm_function(&mut self, function_index: usize) -> Result<&mut WasmFunction, ParsingError> {
+	pub fn get_wasm_function(&mut self, function_index: usize) -> Result<&mut WasmFunction, ParsingError> {
 		let wasm_len = self.wasm.len();
 		let imports_len = self.imports.len();
 		let total_len = wasm_len + imports_len;
