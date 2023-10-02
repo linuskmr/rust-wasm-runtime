@@ -7,10 +7,10 @@ const MEMORY_PAGE_SIZE: usize = 4096;
 
 #[derive(Default, PartialEq, Eq)]
 pub struct Memory {
-	pub(crate) data: Vec<u8>,
+	pub data: Vec<u8>,
 	/// Minimum and maximum page limit.
-	pub(crate) page_limit: Range<usize>,
-	pub(crate) name: Option<String>,
+	pub page_limit: Range<usize>,
+	pub name: Option<String>,
 }
 
 impl From<MemoryBlueprint> for Memory {
@@ -25,8 +25,8 @@ impl From<MemoryBlueprint> for Memory {
 
 		// Copy init data from data section into memory
 		for init_segment in blueprint.init {
-			let memory_slice_addr = (init_segment.addr, init_segment.addr + init_segment.data.len());
-			memory.data[memory_slice_addr.0..memory_slice_addr.1].copy_from_slice(&init_segment.data);
+			let memory_slice_addr = init_segment.addr..init_segment.addr+init_segment.data.len();
+			memory.data[memory_slice_addr].copy_from_slice(&init_segment.data);
 		}
 		memory
 	}
