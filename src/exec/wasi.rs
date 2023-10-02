@@ -6,10 +6,10 @@ use crate::exec::instance::InstanceRef;
 
 
 pub fn fd_write(instance: &mut InstanceRef) -> ExecutionResult {
-	let result_ptr = i32::try_from(instance.op_stack_pop()?)? as usize;
-	let iovec_array_len = i32::try_from(instance.op_stack_pop()?)? as usize;
-	let iovec_array_ptr = i32::try_from(instance.op_stack_pop()?)? as usize;
-	let fd = i32::try_from(instance.op_stack_pop()?)?;
+	let result_ptr = instance.operand_stack.pop::<i32>()? as usize;
+	let iovec_array_len = instance.operand_stack.pop::<i32>()? as usize;
+	let iovec_array_ptr = instance.operand_stack.pop::<i32>()? as usize;
+	let fd = instance.operand_stack.pop::<i32>()?;
 
 	let mem = instance.memory.as_mut().unwrap();
 
