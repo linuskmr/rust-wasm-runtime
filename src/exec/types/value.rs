@@ -1,5 +1,5 @@
 use std::rc::Rc;
-use crate::exec::error::ExecutionError;
+use crate::exec::error::Error;
 use crate::exec::types::*;
 
 #[derive(PartialEq, Debug, Clone)]
@@ -17,12 +17,12 @@ pub enum Value {
 }
 
 impl TryFrom<Value> for i32 {
-	type Error = ExecutionError;
+	type Error = Error;
 
 	fn try_from(value: Value) -> Result<Self, Self::Error> {
 		match value {
 			Value::I32(val) => Ok(val),
-			got => Err(ExecutionError::StackTypeError {
+			got => Err(Error::StackTypeError {
 				got,
 				expected: "i32",
 			}),
@@ -31,12 +31,12 @@ impl TryFrom<Value> for i32 {
 }
 
 impl TryFrom<Value> for u32 {
-	type Error = ExecutionError;
+	type Error = Error;
 
 	fn try_from(value: Value) -> Result<Self, Self::Error> {
 		match value {
 			Value::I32(val) => Ok(val as u32),
-			got => Err(ExecutionError::StackTypeError {
+			got => Err(Error::StackTypeError {
 				got,
 				expected: "i32(u32)",
 			}),
@@ -45,12 +45,12 @@ impl TryFrom<Value> for u32 {
 }
 
 impl TryFrom<Value> for i64 {
-	type Error = ExecutionError;
+	type Error = Error;
 
 	fn try_from(value: Value) -> Result<Self, Self::Error> {
 		match value {
 			Value::I64(val) => Ok(val),
-			got => Err(ExecutionError::StackTypeError {
+			got => Err(Error::StackTypeError {
 				got,
 				expected: "i64",
 			}),
@@ -59,12 +59,12 @@ impl TryFrom<Value> for i64 {
 }
 
 impl TryFrom<Value> for u64 {
-	type Error = ExecutionError;
+	type Error = Error;
 
 	fn try_from(value: Value) -> Result<Self, Self::Error> {
 		match value {
 			Value::I64(val) => Ok(val as u64),
-			got => Err(ExecutionError::StackTypeError {
+			got => Err(Error::StackTypeError {
 				got,
 				expected: "i64(u64)",
 			}),
@@ -73,12 +73,12 @@ impl TryFrom<Value> for u64 {
 }
 
 impl TryFrom<Value> for usize {
-	type Error = ExecutionError;
+	type Error = Error;
 
 	fn try_from(value: Value) -> Result<Self, Self::Error> {
 		match value {
 			Value::I64(val) => Ok(val as usize),
-			got => Err(ExecutionError::StackTypeError {
+			got => Err(Error::StackTypeError {
 				got,
 				expected: "usize",
 			}),

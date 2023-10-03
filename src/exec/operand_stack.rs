@@ -1,4 +1,4 @@
-use crate::exec::error::ExecutionError;
+use crate::exec::error::Error;
 use crate::exec::types;
 
 /// The stack for working with values and instructions.
@@ -16,11 +16,11 @@ impl OperandStack {
 
 	/// Pops a [`Value`](types::Value) off the operand stack and tries to convert in into a `T`.
 	///
-	/// If the stack is empty, an [`ExecutionError::PopOnEmptyOperandStack`] is returned.
-	/// If the conversion fails, an [`ExecutionError::StackTypeError`] is returned.
-	pub fn pop<T: TryFrom<types::Value>>(&mut self) -> Result<T, ExecutionError> {
-		let value = self.0.pop().ok_or(ExecutionError::PopOnEmptyOperandStack)?;
-		T::try_from(value.clone()).map_err(|_| ExecutionError::StackTypeError {
+	/// If the stack is empty, an [`Error::PopOnEmptyOperandStack`] is returned.
+	/// If the conversion fails, an [`Error::StackTypeError`] is returned.
+	pub fn pop<T: TryFrom<types::Value>>(&mut self) -> Result<T, Error> {
+		let value = self.0.pop().ok_or(Error::PopOnEmptyOperandStack)?;
+		T::try_from(value.clone()).map_err(|_| Error::StackTypeError {
 			got: value,
 			expected: std::any::type_name::<T>(),
 		})

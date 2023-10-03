@@ -2,8 +2,8 @@ use std::ops::{BitAnd, BitOr, BitXor, Deref, Shl, Shr};
 use std::rc::Rc;
 use crate::exec::memory::Memory;
 use crate::exec::{Callable, Instruction, Value, ExecutionResult, wasi};
-use crate::exec::error::ExecutionError;
-use crate::exec::operand_stack::OperandStack;
+use crate::exec::error::Error;
+use crate::exec::OperandStack;
 use crate::parse::Module;
 
 
@@ -65,7 +65,7 @@ impl Instance {
 		}
 	}
 
-	pub fn start(&mut self) -> Result<(), ExecutionError> {
+	pub fn start(&mut self) -> Result<(), Error> {
 		self.as_ref().exec_start()
 	}
 
@@ -107,7 +107,7 @@ impl<'a> InstanceRef<'a> {
 	#[tracing::instrument(skip(self))]
 	fn exec_function(&mut self, function_index: usize) -> ExecutionResult {
 		let function = self.functions.get(function_index)
-			.ok_or(ExecutionError::FunctionIndexOutOfBounds {
+			.ok_or(Error::FunctionIndexOutOfBounds {
 				index: function_index,
 				len: self.functions.len()
 			})?;
@@ -133,7 +133,7 @@ impl<'a> InstanceRef<'a> {
 			let span = tracing::trace_span!("execute_instruction", ?instruction);
 			let _span_enter = span.enter();
 			match instruction {
-				Instruction::Unreachable => return Err(ExecutionError::Trap("Instruction::Unreachable")),
+				Instruction::Unreachable => return Err(Error::Trap("Instruction::Unreachable")),
 				Instruction::Nop => (),
 				Instruction::Block { block_type, instructions } => {
 					self.execute_instructions(instructions)?;
@@ -162,10 +162,10 @@ impl<'a> InstanceRef<'a> {
 
 					tracing::trace!("mem[{:?}] <- {:?}", addr, val);
 					let mem = self.memory.as_mut()
-						.ok_or(ExecutionError::NoMemory)?;
+						.ok_or(Error::NoMemory)?;
 					let mem_data_len = mem.data.len(); // Has to fetched in advance for borrow checker
 					let mem_slice = mem.data.get_mut(addr.clone())
-						.ok_or(ExecutionError::InvalidMemoryArea { addr, size: mem_data_len })?;
+						.ok_or(Error::InvalidMemoryArea { addr, size: mem_data_len })?;
 					mem_slice.copy_from_slice(&val);
 				},
 				Instruction::Call { function_index } => self.exec_function(*function_index)?,

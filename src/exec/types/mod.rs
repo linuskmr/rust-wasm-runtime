@@ -11,9 +11,9 @@ pub use identifier::Identifier;
 pub use instruction::Instruction;
 pub use mem_arg::MemArg;
 pub use value::Value;
-use crate::exec::error::ExecutionError;
+use crate::exec::error::Error;
 
-pub type ExecutionResult = Result<(), ExecutionError>;
+pub type ExecutionResult = Result<(), Error>;
 
 
 
